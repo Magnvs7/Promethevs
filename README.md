@@ -4,6 +4,8 @@
 
 PROMETHEVS Technical Report 1 · version 0.1 (research preview) · Ryan Flavell, MAGNVS Ltd (ryan@magnvs.co.uk) · October 2026
 
+**This release is the report, the figures and the logs behind every number. The engine program follows in a later release.**
+
 **Why.** Frontier-level AI today needs either a cloud subscription or hardware costing tens of thousands of pounds. PROMETHEVS, named after Prometheus, who in the myth brought fire to people, sets out to change that: frontier capability, at a speed close to the cloud, within 97 percent of what the original full weights would say, on a computer people already own. This release is the first step.
 
 PROMETHEVS runs the full DeepSeek-V4.1-Flash-1017, a 510 GB mixture-of-experts model, on a five-year-old gaming PC (Ryzen 9 3950X, 64 GB of DDR4, an RTX 3060 with 12 GB, two NVMe drives). The method is compress, then correct. Every word is first computed on a 2-bit copy of the model's experts, which reads about 60 percent of the bytes of the original. The model's own confidence, the margin between its top two candidates, then marks the words it may have got wrong, and only those are recomputed with the original FP4 weights, which a stored correction plane rebuilds from the 2-bit copy. The engine runs at nearly the speed of the 2-bit copy while staying close to the original model.
