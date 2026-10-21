@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 40 840 372" width="840" height="372" font-family="Segoe UI, Arial, sans-serif">
+  <title>Agreement with the exact path: slips per 1,000 words by gate, and agreement on two further prompts</title>
+  <desc>Left: slips per 1,000 words at gates 0.25, 0.30 and 0.45 for the baseline build (14.6, 12.5, 10.4) and the engine (13.5, 11.5, 8.3), from 960 audited words. Right: agreement on two further prompts. Baseline build: 97.16 percent on a 1,101-token prompt (317 words) and 99.69 percent on a 4,288-token prompt (320 words). Engine: 97.80 and 100 percent. The quality contract is 97 percent.</desc>
+  <rect y="40" width="840" height="372" fill="#ffffff"/>
+
+  <!-- left panel: slips per 1000 words; 20 px per unit, baseline y=330, axis 0..16 -->
+  <text x="230" y="58" text-anchor="middle" font-size="13" font-weight="600" fill="#1a202c">Slips per 1,000 words (lower is better)</text>
+  <g stroke="#d9dee5" stroke-width="1">
+    <line x1="60" y1="330" x2="400" y2="330"/><line x1="60" y1="250" x2="400" y2="250"/><line x1="60" y1="170" x2="400" y2="170"/><line x1="60" y1="90" x2="400" y2="90"/>
+  </g>
+  <g font-size="12" fill="#4a5568" text-anchor="end"><text x="52" y="334">0</text><text x="52" y="254">5</text><text x="52" y="174">10</text><text x="52" y="94">15</text></g>
+  <!-- 16 px per slip per 1,000 words: 14.58 -> 233.3, 13.54 -> 216.7, 12.50 -> 200, 11.46 -> 183.3, 10.42 -> 166.7, 8.33 -> 133.3 -->
+  <rect x="76" y="96.7" width="40" height="233.3" fill="#555555"/><rect x="120" y="113.3" width="40" height="216.7" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <rect x="190" y="130" width="40" height="200" fill="#555555"/><rect x="234" y="146.7" width="40" height="183.3" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <rect x="304" y="163.3" width="40" height="166.7" fill="#555555"/><rect x="348" y="196.7" width="40" height="133.3" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <g font-size="12" font-weight="600" fill="#1a202c" text-anchor="middle">
+    <text x="96" y="91">14.6</text><text x="140" y="108">13.5</text><text x="210" y="125">12.5</text><text x="254" y="141">11.5</text><text x="324" y="158">10.4</text><text x="368" y="191">8.3</text>
+  </g>
+  <g font-size="12" fill="#1a202c" text-anchor="middle">
+    <text x="118" y="350">Gate 0.25</text><text x="252" y="350">Gate 0.30</text><text x="366" y="350">Gate 0.45 (used)</text>
+  </g>
+  <text x="18" y="200" font-size="12" fill="#4a5568" text-anchor="middle" transform="rotate(-90 18 200)">Slips per 1,000 words</text>
+  <g font-size="12" fill="#1a202c">
+    <rect x="76" y="372" width="12" height="12" fill="#555555"/><text x="94" y="383">Baseline build, BC (14, 12, 10 slips in 960 words)</text>
+    <rect x="76" y="392" width="12" height="12" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/><text x="94" y="403">Engine, BF (13, 11, 8 slips in 960 words)</text>
+  </g>
+
+  <!-- right panel: agreement percent, axis 96..100, 60 px per point, baseline y=330 -->
+  <text x="650" y="58" text-anchor="middle" font-size="13" font-weight="600" fill="#1a202c">Two further prompts (agreement, %)</text>
+  <g stroke="#d9dee5" stroke-width="1">
+    <line x1="500" y1="330" x2="800" y2="330"/><line x1="500" y1="270" x2="800" y2="270"/><line x1="500" y1="210" x2="800" y2="210"/><line x1="500" y1="150" x2="800" y2="150"/><line x1="500" y1="90" x2="800" y2="90"/>
+  </g>
+  <g font-size="12" fill="#4a5568" text-anchor="end"><text x="492" y="334">96</text><text x="492" y="274">97</text><text x="492" y="214">98</text><text x="492" y="154">99</text><text x="492" y="94">100</text></g>
+  <!-- 97.80 -> y = 330 - 1.8*60 = 222 ; 100 -> 90 -->
+  <!-- released 97.16 -> y 260.4 (h 69.6); 99.69 -> 108.6 (h 221.4); engine 97.80 -> 222 (h 108); 100 -> 90 (h 240) -->
+  <rect x="536" y="260.4" width="40" height="69.6" fill="#555555"/><rect x="580" y="222" width="40" height="108" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <rect x="676" y="108.6" width="40" height="221.4" fill="#555555"/><rect x="720" y="90" width="40" height="240" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <line x1="500" y1="270" x2="800" y2="270" stroke="#1a202c" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <g font-size="12" font-weight="600" fill="#1a202c" text-anchor="middle"><text x="556" y="253">97.16</text><text x="600" y="214">97.80</text><text x="696" y="101">99.69</text><text x="740" y="82">100</text></g>
+  <g font-size="12" fill="#1a202c" text-anchor="middle">
+    <text x="578" y="350">1,101-token prompt</text><text x="578" y="366" fill="#4a5568">slips: 9 and 7</text>
+    <text x="718" y="350">4,288-token prompt</text><text x="718" y="366" fill="#4a5568">slips: 1 and 0</text>
+  </g>
+  <line x1="500" y1="388" x2="526" y2="388" stroke="#1a202c" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="534" y="392" font-size="12" fill="#1a202c">97 percent quality contract</text>
+</svg>

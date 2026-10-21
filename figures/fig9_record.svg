@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 260" width="640" height="260" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+  <title>Test results recorded per week</title>
+  <desc>Test results recorded in the project's tracking record per week: 432 from 30 September to 6 October, 328 from 7 to 13 October, 206 from 14 to 20 October.</desc>
+  <rect width="640" height="260" fill="#ffffff"/>
+  <line x1="60" y1="210" x2="600" y2="210" stroke="#1a202c" stroke-width="1"/>
+  <line x1="60" y1="30" x2="60" y2="210" stroke="#1a202c" stroke-width="1"/>
+  <!-- scale: 0.36 px per result; 500 = 180 px -->
+  <g stroke="#d9dee5" stroke-width="1"><line x1="60" y1="102" x2="600" y2="102"/><line x1="60" y1="30" x2="600" y2="30"/></g>
+  <g fill="#4a5568" text-anchor="end"><text x="52" y="214">0</text><text x="52" y="106">300</text><text x="52" y="34">500</text></g>
+  <rect x="110" y="54.5" width="110" height="155.5" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <rect x="270" y="91.9" width="110" height="118.1" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <rect x="430" y="135.8" width="110" height="74.2" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <g fill="#1a202c" text-anchor="middle" font-weight="700" font-size="16">
+    <text x="165" y="46">432</text><text x="325" y="84">328</text><text x="485" y="128">206</text>
+  </g>
+  <g fill="#1a202c" text-anchor="middle">
+    <text x="165" y="232">30 Sep to 6 Oct</text><text x="325" y="232">7 to 13 Oct</text><text x="485" y="232">14 to 20 Oct</text>
+  </g>
+  <text x="20" y="22" fill="#4a5568" font-size="12">Test results recorded</text>
+</svg>

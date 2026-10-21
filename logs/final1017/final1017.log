@@ -1,0 +1,38 @@
+12:42:14 BASE1017: measurement, no pass/fail. Legs P1 C1 C2 P2, 160 tokens, 2 passes, 1017 stores only. Machine: 55.8 GB RAM free, CPU 23 percent
+12:44:59 CODE_1: wall 165 s | EXIT CODE 0 | SUMMARY: 5.500 new tokens/s 5.803 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 1361, plane MB read 14923.8, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 141 (no b2 resident 141, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 959, plane MB read 10520.2, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 141 (no b2 resident 141, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching (
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    crash-lines: 0
+12:48:54 R22_1: wall 235 s | EXIT CODE 0 | SUMMARY: 4.881 new tokens/s 3.556 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 3180, plane MB read 34854.2, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 337 (no b2 resident 337, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 5330, plane MB read 58433.7, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 687 (no b2 resident 687, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 13 (8.1 percent), margin threshold 0.45, exact token differed from the cheap one in 0
+    scf: tokens 160, re-run 20 (12.5 percent), margin threshold 0.45, exact token differed from the cheap one in 3
+    crash-lines: 0
+12:56:42 AGENT_1: wall 468 s | EXIT CODE 0 | SUMMARY: 3.889 new tokens/s 4.421 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 3237, plane MB read 35523.2, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 385 (no b2 resident 385, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 1239, plane MB read 13594.7, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 139 (no b2 resident 139, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 10 (6.2 percent), margin threshold 0.45, exact token differed from the cheap one in 3
+    scf: tokens 160, re-run 4 (2.5 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    crash-lines: 0
+12:59:47 CODE_2: wall 185 s | EXIT CODE 0 | SUMMARY: 5.647 new tokens/s 6.010 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 1362, plane MB read 14934.8, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 140 (no b2 resident 140, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 960, plane MB read 10531.2, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 140 (no b2 resident 140, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching (
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    crash-lines: 0
+13:03:54 R22_2: wall 245 s | EXIT CODE 0 | SUMMARY: 4.873 new tokens/s 5.414 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 3683, plane MB read 40380.9, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 352 (no b2 resident 352, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 1939, plane MB read 21260.0, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 221 (no b2 resident 221, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 12 (7.5 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    scf: tokens 160, re-run 9 (5.6 percent), margin threshold 0.45, exact token differed from the cheap one in 0
+    crash-lines: 0
+13:12:21 AGENT_2: wall 507 s | EXIT CODE 0 | SUMMARY: 5.053 new tokens/s 4.697 new tokens/s  | G: bytes read (incl. background) 20480
+    plane: restores 1334, plane MB read 14632.7, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 204 (no b2 resident 204, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 1012, plane MB read 11103.5, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 125 (no b2 resident 125, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    crash-lines: 0
+13:12:21 done

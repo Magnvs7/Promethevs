@@ -1,0 +1,12 @@
+12:04:17 AUDIT1017: slips at gate 0.30 over CODE / R22 / AGENT (160 tokens each, 2 passes = 960 words), 1017 full configuration. Contract: pooled agreement >= 97.0 percent (old weights audit4: 99.17).
+12:07:18 CODE: wall 181 s | EXIT CODE 0 | SUMMARY: 5.509 new tokens/s 5.353 new tokens/s  | gpuhot: 79 hot b2 experts
+12:11:57 R22: wall 279 s | EXIT CODE 0 | SUMMARY: 3.016 new tokens/s 3.078 new tokens/s  | gpuhot: 74 hot b2 experts
+12:19:41 AGENT: wall 464 s | EXIT CODE 0 | SUMMARY: 5.108 new tokens/s 4.613 new tokens/s  | gpuhot: 54 hot b2 experts
+AUDIT1017B REPORT: audit1017b CODE: 320 words, 10 checked, 5 overturned, slips at 0.30 3
+AUDIT1017B REPORT: audit1017b R22: 320 words, 63 checked, 20 overturned, slips at 0.30 9
+AUDIT1017B REPORT: audit1017b AGENT: 320 words, 12 checked, 4 overturned, slips at 0.30 0
+AUDIT1017B REPORT: audit1017b (3 legs, 960 words): gate 0.45 slips 10 = 10.42 per 1000 -> agreement 98.96 percent
+AUDIT1017B REPORT: audit1017b (3 legs, 960 words): gate 0.30 slips 12 = 12.50 per 1000 -> agreement 98.75 percent
+AUDIT1017B REPORT: audit1017b (3 legs, 960 words): gate 0.25 slips 14 = 14.58 per 1000 -> agreement 98.54 percent
+AUDIT1017B RESULT: KEEP EXPERT_SKIP 0.12 (contract met) (adopted skip recipe pooled agreement at gate 0.30 98.75 percent, 12 slips in 960 words; contract >= 97.0; audit3 same prompts 98.96 = 10/960)
+12:19:42 done

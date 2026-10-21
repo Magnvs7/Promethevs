@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 34 840 392" width="840" height="392" font-family="Segoe UI, Arial, sans-serif">
+  <title>Generation speed by prompt: plain exact decoding, baseline build, engine cold and engine warm</title>
+  <desc>Tokens per second, 160 new tokens. Plain exact decoding on the code prompt 2.14. Baseline build BC (second pass, cache cleared): code 5.91, reasoning 4.49, agent 4.56. Engine BF, cold start (first pass): code 5.82 (median of three), reasoning 4.67, agent 5.22. Engine BF, warm (second pass of the same prompt with the cache kept): code 7.39 (median of three), reasoning 4.43, agent 4.77. Dots show each run.</desc>
+  <rect y="34" width="840" height="392" fill="#ffffff"/>
+  <!-- legend -->
+  <g font-size="12" fill="#1a202c">
+    <rect x="76" y="40" width="14" height="14" fill="#999999"/><text x="96" y="52">Plain exact decoding</text>
+    <rect x="236" y="40" width="14" height="14" fill="#555555"/><text x="256" y="52">Baseline build (BC)</text>
+    <rect x="396" y="40" width="14" height="14" fill="#FFD98A" stroke="#1a202c" stroke-width="0.8"/><text x="416" y="52">Engine, cold start</text>
+    <rect x="556" y="40" width="14" height="14" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/><text x="576" y="52">Engine, warm (cache kept)</text>
+  </g>
+  <!-- gridlines: 40 px per tokens/s, baseline y=380 -->
+  <g stroke="#d9dee5" stroke-width="1">
+    <line x1="60" y1="380" x2="800" y2="380"/><line x1="60" y1="300" x2="800" y2="300"/><line x1="60" y1="220" x2="800" y2="220"/><line x1="60" y1="140" x2="800" y2="140"/>
+  </g>
+  <g font-size="12" fill="#4a5568" text-anchor="end">
+    <text x="52" y="384">0</text><text x="52" y="304">2</text><text x="52" y="224">4</text><text x="52" y="144">6</text><text x="52" y="64">8</text>
+  </g>
+  <text x="18" y="220" font-size="12" fill="#4a5568" text-anchor="middle" transform="rotate(-90 18 220)">Tokens per second</text>
+  <line x1="60" y1="60" x2="800" y2="60" stroke="#1a202c" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="798" y="75" text-anchor="end" font-size="12" fill="#1a202c">8 tokens/s milestone</text>
+
+  <!-- plain (code prompt only) -->
+  <rect x="76" y="294.5" width="52" height="85.5" fill="#999999"/>
+  <circle cx="96" cy="293.7" r="4.5" fill="#1a202c"/><circle cx="108" cy="295.4" r="4.5" fill="#ffffff" stroke="#1a202c" stroke-width="1.5"/>
+  <text x="102" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">2.14</text>
+
+  <!-- code: released, engine cold (median of 3), engine warm (median of 3) -->
+  <rect x="180" y="143.7" width="52" height="236.3" fill="#555555"/>
+  <circle cx="198" cy="147.9" r="4.5" fill="#ffffff" stroke="#1a202c" stroke-width="1.5"/><circle cx="214" cy="139.6" r="4.5" fill="#1a202c"/>
+  <text x="206" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">5.91</text>
+  <rect x="240" y="147.4" width="52" height="232.6" fill="#FFD98A" stroke="#1a202c" stroke-width="0.8"/>
+  <circle cx="254" cy="181.0" r="4.5" fill="#1a202c"/><circle cx="266" cy="147.4" r="4.5" fill="#1a202c"/><circle cx="278" cy="142.1" r="4.5" fill="#1a202c"/>
+  <text x="266" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#1a202c">5.82</text>
+  <rect x="300" y="84.4" width="52" height="295.6" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <circle cx="314" cy="84.4" r="4.5" fill="#ffffff"/><circle cx="326" cy="83.9" r="4.5" fill="#ffffff"/><circle cx="338" cy="86.6" r="4.5" fill="#ffffff"/>
+  <text x="326" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">7.39</text>
+
+  <!-- reasoning -->
+  <rect x="400" y="200.6" width="52" height="179.4" fill="#555555"/>
+  <circle cx="418" cy="237.8" r="4.5" fill="#ffffff" stroke="#1a202c" stroke-width="1.5"/><circle cx="434" cy="163.4" r="4.5" fill="#1a202c"/>
+  <text x="426" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">4.49</text>
+  <rect x="460" y="193.0" width="52" height="187.0" fill="#FFD98A" stroke="#1a202c" stroke-width="0.8"/>
+  <circle cx="478" cy="202.2" r="4.5" fill="#1a202c"/><circle cx="494" cy="183.8" r="4.5" fill="#1a202c"/>
+  <text x="486" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#1a202c">4.67</text>
+  <rect x="520" y="202.9" width="52" height="177.1" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <circle cx="538" cy="201.9" r="4.5" fill="#ffffff"/><circle cx="554" cy="204.0" r="4.5" fill="#ffffff"/>
+  <text x="546" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">4.43</text>
+
+  <!-- agent -->
+  <rect x="620" y="197.6" width="52" height="182.4" fill="#555555"/>
+  <circle cx="638" cy="203.2" r="4.5" fill="#ffffff" stroke="#1a202c" stroke-width="1.5"/><circle cx="654" cy="192.1" r="4.5" fill="#1a202c"/>
+  <text x="646" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">4.56</text>
+  <rect x="680" y="171.2" width="52" height="208.8" fill="#FFD98A" stroke="#1a202c" stroke-width="0.8"/>
+  <circle cx="698" cy="186.4" r="4.5" fill="#1a202c"/><circle cx="714" cy="155.9" r="4.5" fill="#1a202c"/>
+  <text x="706" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#1a202c">5.22</text>
+  <rect x="740" y="189.1" width="52" height="190.9" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <circle cx="758" cy="190.0" r="4.5" fill="#ffffff"/><circle cx="774" cy="188.2" r="4.5" fill="#ffffff"/>
+  <text x="766" y="372" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff">4.77</text>
+
+  <g font-size="13" fill="#1a202c" text-anchor="middle">
+    <text x="102" y="402">Code</text><text x="102" y="418" font-size="11" fill="#4a5568">(plain only)</text>
+    <text x="266" y="402">Code</text><text x="486" y="402">Reasoning</text><text x="706" y="402">Agent</text>
+  </g>
+</svg>

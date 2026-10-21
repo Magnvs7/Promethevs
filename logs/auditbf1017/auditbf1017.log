@@ -1,0 +1,6 @@
+19:00:38 AUDIT1017: slips at gate 0.30 over CODE / R22 / AGENT (160 tokens each, 2 passes = 960 words), 1017 full configuration. Contract: pooled agreement >= 97.0 percent (old weights audit4: 99.17).
+19:03:22 CODE: wall 164 s | EXIT CODE 0 | SUMMARY: 4.838 new tokens/s 6.432 new tokens/s  | gpuhot: 67 hot b2 experts
+19:07:06 R22: wall 224 s | EXIT CODE 0 | SUMMARY: 3.923 new tokens/s 4.124 new tokens/s  | gpuhot: 70 hot b2 experts
+19:14:12 AGENT: wall 426 s | EXIT CODE 0 | SUMMARY: 4.388 new tokens/s 4.435 new tokens/s  | gpuhot: 50 hot b2 experts
+F:\llm\exp\venv313\Scripts\python.exe: can't open file 'F:\\llm\\exp\\hilo\\v41\\patches\\auditbf1017_read.py': [Errno 2] No such file or directory
+19:14:12 done

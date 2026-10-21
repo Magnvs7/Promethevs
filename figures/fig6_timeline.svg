@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 262" width="840" height="262" font-family="Segoe UI, Arial, sans-serif">
+  <title>Development timeline, 26 September to 20 October 2026</title>
+  <desc>Four stages. gpt-oss-120b, 26 to 28 September: 6.09 against 4.76 tokens per second for the best stock configuration on a code-editing task, exact. GLM-5.3 and GLM-5.3-Flash, 27 to 29 September: Flash 3.33 against 1.12, full 744B model 0.768 against 0.159, exact. DeepSeek-V4.1-Flash, 29 September to 18 October: first conversation 30 September; 4.07 to 4.13 exact on an editing task on 2 October; first corrected run 4.40 on 9 October; 5.66, mean of eight runs, on 14 October. DeepSeek-V4.1-Flash-1017, from 19 October: 5.8 cold and 7.4 warm on the code prompt, 99.17 percent agreement (this report).</desc>
+  <rect width="840" height="262" fill="#ffffff"/>
+  <!-- x(d) = 200 + 23.08 d, d = days after 25 Sep (axis origin) -->
+  <g font-size="12" fill="#1a202c" text-anchor="end" font-weight="600">
+    <text x="190" y="40">gpt-oss-120b</text>
+    <text x="190" y="82">GLM-5.3 and -Flash</text>
+    <text x="190" y="142">DeepSeek-V4.1-Flash</text>
+    <text x="190" y="206">V4.1-Flash-1017</text>
+  </g>
+  <g stroke="#e2e8f0" stroke-width="1">
+    <line x1="200" y1="18" x2="200" y2="228"/><line x1="338.5" y1="18" x2="338.5" y2="228"/><line x1="500" y1="18" x2="500" y2="228"/><line x1="661.6" y1="18" x2="661.6" y2="228"/><line x1="800" y1="18" x2="800" y2="228"/>
+  </g>
+  <!-- bars -->
+  <rect x="223" y="29" width="46" height="15" rx="3" fill="#999999"/>
+  <rect x="246" y="71" width="46" height="15" rx="3" fill="#777777"/>
+  <rect x="292" y="131" width="439" height="15" rx="3" fill="#555555"/>
+  <rect x="754" y="195" width="46" height="15" rx="3" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/>
+  <!-- labels for stages 1, 2, 4 -->
+  <g font-size="11" fill="#1a202c">
+    <text x="278" y="41">6.09 against 4.76 tokens/s (code edit, exact)</text>
+    <text x="300" y="83">Flash 3.33 against 1.12; full 744B model 0.768 against 0.159 (exact)</text>
+    <text x="746" y="207" text-anchor="end">From 19 Oct: 5.8 cold, 7.4 warm tokens/s on the code prompt, 98.33% agreement, every difference (this report)</text>
+  </g>
+  <!-- DeepSeek milestones -->
+  <g fill="#ffffff" stroke="#1a202c" stroke-width="1.5">
+    <circle cx="315.4" cy="138.5" r="4.5"/><circle cx="361.6" cy="138.5" r="4.5"/><circle cx="523.1" cy="138.5" r="4.5"/><circle cx="638.5" cy="138.5" r="4.5"/>
+  </g>
+  <g stroke="#4a5568" stroke-width="1">
+    <line x1="315.4" y1="131" x2="315.4" y2="118"/><line x1="523.1" y1="131" x2="523.1" y2="118"/>
+    <line x1="361.6" y1="146" x2="361.6" y2="158"/><line x1="638.5" y1="146" x2="638.5" y2="158"/>
+  </g>
+  <g font-size="11" fill="#1a202c">
+    <text x="309" y="113">30 Sep: first conversation</text>
+    <text x="517" y="113">9 Oct: first corrected run, 4.40</text>
+    <text x="356" y="170">2 Oct: 4.07 to 4.13, exact (editing)</text>
+    <text x="632" y="170">14 Oct: 5.66, mean of 8 runs</text>
+  </g>
+  <!-- axis -->
+  <line x1="200" y1="228" x2="800" y2="228" stroke="#4a5568" stroke-width="1"/>
+  <g font-size="11" fill="#4a5568" text-anchor="middle">
+    <text x="223" y="244">26 Sep</text><text x="338.5" y="244">1 Oct</text><text x="500" y="244">8 Oct</text><text x="661.6" y="244">15 Oct</text><text x="800" y="244">21 Oct</text>
+  </g>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 48 640 128" width="640" height="128" font-family="Segoe UI, Arial, sans-serif">
+  <title>Disk needed: 1,009.1 GiB</title>
+  <desc>Raw weights 475.3 GiB; 2-bit copies and correction planes 321.0 GiB; FP4 copies and mirrors 196.1 GiB; non-expert model file 16.7 GiB. Total 1,009.1 GiB.</desc>
+  <rect y="48" width="640" height="128" fill="#ffffff"/>
+  <!-- 580 px = 1009.1 GiB; 0.5748 px per GiB; x0=30 -->
+  <rect x="30" y="60" width="273.2" height="60" fill="#999999"/>
+  <rect x="303.2" y="60" width="184.5" height="60" fill="#555555"/>
+  <rect x="487.7" y="60" width="112.7" height="60" fill="#bbbbbb"/>
+  <rect x="600.4" y="60" width="9.6" height="60" fill="#1a202c"/>
+  <g font-size="13" fill="#ffffff" text-anchor="middle" font-weight="600">
+    <text x="166.6" y="86">Raw weights</text><text x="166.6" y="104">475.3 GiB</text>
+    <text x="395.5" y="86">2-bit copies +</text><text x="395.5" y="104">planes 321.0 GiB</text>
+    <text x="544" y="86">FP4 copies +</text><text x="544" y="104">mirrors 196.1</text>
+  </g>
+  <line x1="605" y1="120" x2="605" y2="150" stroke="#1a202c" stroke-width="1.5"/>
+  <text x="605" y="166" text-anchor="end" font-size="12" fill="#1a202c">Non-expert model file 16.7 GiB</text>
+</svg>

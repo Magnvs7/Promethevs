@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 350" width="840" height="350" font-family="Segoe UI, Arial, sans-serif">
+  <title>GSM8K: generation speed per problem, baseline build and engine</title>
+  <desc>Tokens per second on ten GSM8K problems, 320-token limit. Baseline build: 6.086, 6.248, 5.872, 5.602, 3.645, 6.485, 3.318, 5.737, 4.381, 5.532 (mean 5.29). Engine: 4.060, 6.284, 4.187, 3.877, 3.176, 7.012, 3.385, 4.828, 3.891, 6.278 (mean 4.70). Both answer G05 wrongly (240 against a key of 200) and the other nine correctly.</desc>
+  <rect width="840" height="350" fill="#ffffff"/>
+  <g font-size="12" fill="#1a202c">
+    <rect x="76" y="8" width="14" height="14" fill="#555555"/><text x="96" y="20">Baseline build, BC (9 of 10 correct, mean 5.29)</text>
+    <rect x="420" y="8" width="14" height="14" fill="#FFB100" stroke="#1a202c" stroke-width="0.8"/><text x="440" y="20">Engine, BF (9 of 10, mean 4.70)</text>
+  </g>
+  <!-- 30 px per token/s, baseline y=290 -->
+  <g stroke="#d9dee5" stroke-width="1">
+    <line x1="60" y1="290" x2="800" y2="290"/><line x1="60" y1="230" x2="800" y2="230"/><line x1="60" y1="170" x2="800" y2="170"/><line x1="60" y1="110" x2="800" y2="110"/><line x1="60" y1="50" x2="800" y2="50"/>
+  </g>
+  <g font-size="12" fill="#4a5568" text-anchor="end"><text x="52" y="294">0</text><text x="52" y="234">2</text><text x="52" y="174">4</text><text x="52" y="114">6</text><text x="52" y="54">8</text></g>
+  <text x="18" y="170" font-size="12" fill="#4a5568" text-anchor="middle" transform="rotate(-90 18 170)">Tokens per second</text>
+  <g fill="#555555">
+    <rect x="69" y="107.4" width="26" height="182.6"/><rect x="143" y="102.6" width="26" height="187.4"/><rect x="217" y="113.8" width="26" height="176.2"/><rect x="291" y="121.9" width="26" height="168.1"/><rect x="365" y="180.6" width="26" height="109.4"/>
+    <rect x="439" y="95.4" width="26" height="194.6"/><rect x="513" y="190.5" width="26" height="99.5"/><rect x="587" y="117.9" width="26" height="172.1"/><rect x="661" y="158.6" width="26" height="131.4"/><rect x="735" y="124.0" width="26" height="166.0"/>
+  </g>
+  <g fill="#FFB100" stroke="#1a202c" stroke-width="0.8">
+    <rect x="99" y="168.2" width="26" height="121.8"/><rect x="173" y="101.5" width="26" height="188.5"/><rect x="247" y="164.4" width="26" height="125.6"/><rect x="321" y="173.7" width="26" height="116.3"/><rect x="395" y="194.7" width="26" height="95.3"/>
+    <rect x="469" y="79.6" width="26" height="210.4"/><rect x="543" y="188.4" width="26" height="101.6"/><rect x="617" y="145.2" width="26" height="144.8"/><rect x="691" y="173.3" width="26" height="116.7"/><rect x="765" y="101.7" width="26" height="188.3"/>
+  </g>
+  <line x1="60" y1="131.3" x2="800" y2="131.3" stroke="#555555" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <line x1="60" y1="149" x2="800" y2="149" stroke="#1a202c" stroke-width="1.2" stroke-dasharray="2 3"/>
+  <g font-size="12" fill="#1a202c" text-anchor="middle">
+    <text x="97" y="308">G01</text><text x="171" y="308">G02</text><text x="245" y="308">G03</text><text x="319" y="308">G04</text><text x="393" y="308" fill="#1a202c" font-weight="600">G05</text>
+    <text x="467" y="308">G06</text><text x="541" y="308">G07</text><text x="615" y="308">G08</text><text x="689" y="308">G09</text><text x="763" y="308">G10</text>
+  </g>
+  <text x="393" y="324" font-size="11" fill="#1a202c" text-anchor="middle">both wrong:</text>
+  <text x="393" y="338" font-size="11" fill="#1a202c" text-anchor="middle">240, key 200</text>
+</svg>

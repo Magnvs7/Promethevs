@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 46 760 340" width="760" height="340" font-family="Segoe UI, Arial, sans-serif">
+  <title>Where the time goes in one round of the engine</title>
+  <desc>A clean round takes about 455 milliseconds and the draft about 97 milliseconds, 552 milliseconds in all. Inside the round: expert compute 132 ms, attention 128 ms, time the timers do not attribute 81 ms, other MoE work 48 ms, read wait 43 ms and small items 23 ms. A round commits 4.13 words on average, so each word costs about 134 milliseconds, which is 7.5 tokens per second when no word needs a correction. A speed of 8 tokens per second needs 125 milliseconds per word.</desc>
+  <rect y="46" width="760" height="340" fill="#ffffff"/>
+  <!-- scale: 1 ms = 1.1 px, x0 = 60 -->
+  <text x="60" y="64" font-size="13" fill="#1a202c" font-weight="600">One round: 552 milliseconds, 4.13 committed words on average</text>
+  <rect x="60" y="76" width="500.5" height="54" fill="#555555"/>
+  <rect x="560.5" y="76" width="106.7" height="54" fill="#999999"/>
+  <g font-size="13" font-weight="600" text-anchor="middle">
+    <text x="310" y="100" fill="#ffffff">Round: about 455 ms</text><text x="310" y="118" fill="#ffffff" font-weight="400" font-size="12">five lanes check the guessed words together</text>
+    <text x="613.8" y="100" fill="#1a202c">Draft</text><text x="613.8" y="118" fill="#1a202c" font-weight="400" font-size="12">about 97 ms</text>
+  </g>
+  <line x1="60" y1="142" x2="667.2" y2="142" stroke="#4a5568" stroke-width="1"/>
+  <line x1="60" y1="138" x2="60" y2="146" stroke="#4a5568" stroke-width="1"/><line x1="667.2" y1="138" x2="667.2" y2="146" stroke="#4a5568" stroke-width="1"/>
+  <text x="364" y="162" text-anchor="middle" font-size="12" fill="#4a5568">552 ms (axis: milliseconds, drawn to scale)</text>
+
+  <!-- inside the round, same scale: 132.40, 127.89, 80.91, 47.91, 43.18, 22.80 ms -->
+  <text x="60" y="200" font-size="13" fill="#1a202c" font-weight="600">Inside the 455 ms round (engine timers, mean of 33 clean rounds)</text>
+  <rect x="60" y="212" width="145.6" height="54" fill="#333333"/>
+  <rect x="205.6" y="212" width="140.7" height="54" fill="#555555"/>
+  <rect x="346.3" y="212" width="89.0" height="54" fill="#a0aec0"/>
+  <rect x="435.3" y="212" width="52.7" height="54" fill="#999999"/>
+  <rect x="488.0" y="212" width="47.5" height="54" fill="#cccccc"/>
+  <rect x="535.5" y="212" width="25.1" height="54" fill="#cbd5e0"/>
+  <g font-size="12" text-anchor="middle">
+    <text x="132.8" y="236" fill="#ffffff" font-weight="600">Expert compute</text><text x="132.8" y="253" fill="#ffffff">132 ms</text>
+    <text x="276" y="236" fill="#ffffff" font-weight="600">Attention</text><text x="276" y="253" fill="#ffffff">128 ms</text>
+    <text x="390.8" y="236" fill="#1a202c" font-weight="600">Not attributed</text><text x="390.8" y="253" fill="#1a202c">81 ms</text>
+  </g>
+  <g font-size="11" fill="#1a202c">
+    <rect x="574" y="217" width="9" height="9" fill="#999999"/><text x="588" y="226">Other MoE work 48 ms</text>
+    <rect x="574" y="234" width="9" height="9" fill="#cccccc"/><text x="588" y="243">Read wait 43 ms</text>
+    <rect x="574" y="251" width="9" height="9" fill="#cbd5e0"/><text x="588" y="260">Small items 23 ms</text>
+  </g>
+  <text x="60" y="284" font-size="11" fill="#4a5568">Small items: indexer, norm and head, draft operations, engram, graph build, dispatch and join.</text>
+
+  <text x="60" y="320" font-size="13" fill="#1a202c" font-weight="600">Per committed word: 552 ms / 4.13 words = about 134 ms</text>
+  <rect x="60" y="332" width="147.4" height="40" fill="#555555"/>
+  <text x="133.7" y="357" text-anchor="middle" font-size="13" font-weight="600" fill="#ffffff">134 ms per word</text>
+  <line x1="197.5" y1="324" x2="197.5" y2="380" stroke="#1a202c" stroke-width="2" stroke-dasharray="5 3"/>
+  <text x="212" y="352" font-size="12" fill="#1a202c">125 ms per word is 8 tokens/s</text>
+  <text x="212" y="368" font-size="12" fill="#1a202c">134 ms per word is 7.5 tokens/s when no word needs a correction</text>
+</svg>

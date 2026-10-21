@@ -1,0 +1,21 @@
+# Operating system files
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Office lock and temporary files
+~$*
+*.tmp
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+
+# Local scratch output (never published)
+scratch/
+private/

@@ -1,0 +1,118 @@
+18:41:58 BASE1017: measurement, no pass/fail. Legs P1 C1 C2 P2, 160 tokens, 2 passes, 1017 stores only. Machine: 53.9 GB RAM free, CPU 11 percent
+18:44:57 CODE_1: wall 179 s | EXIT CODE 0 | SUMMARY: 4.975 new tokens/s 7.389 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 1019, plane MB read 11170.6, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 103 (no b2 resident 103, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 648, plane MB read 7104.7, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 72 (no b2 resident 72, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching (0 b
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 0
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 0
+    crash-lines: 0
+18:48:52 R22_1: wall 235 s | EXIT CODE 0 | SUMMARY: 4.444 new tokens/s 4.453 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 3938, plane MB read 43170.0, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 421 (no b2 resident 421, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 3921, plane MB read 42985.7, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 465 (no b2 resident 465, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 15 (9.4 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    scf: tokens 160, re-run 12 (7.5 percent), margin threshold 0.45, exact token differed from the cheap one in 4
+    crash-lines: 0
+18:48:52 BD CODE_1 SUMMARY: tok/s 4.975, accepted 114 = 100.0%, draft 3.40 s;tok/s 7.389, accepted 114 = 100.0%, draft 2.85 s;  | frozen: tok/s 5.500, accepted 121 = 94.5%, draft 4.01 s;tok/s 5.803, accepted 122 = 94.6%, draft 3.87 s;
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1147
+    draft b2: record bytes read                  1801887744
+    draft b2: record reads (layers 40-42)               157
+    draft b2: expert calls (b2 compute, waves)           1046
+    draft b2: record bytes read                  1009975296
+    draft b2: record reads (layers 40-42)                88
+BD ids vs frozen: first difference at index 32 of 160 (frozen 160, new 160)
+BD ids vs frozen: first difference at index 9 of 160 (frozen 160, new 160)
+18:48:53 BD R22_1 SUMMARY: tok/s 4.444, accepted 93 = 90.3%, draft 4.43 s;tok/s 4.453, accepted 104 = 92.0%, draft 4.30 s;  | frozen: tok/s 4.881, accepted 95 = 93.1%, draft 4.77 s;tok/s 3.556, accepted 96 = 93.2%, draft 5.71 s;
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1337
+    draft b2: record bytes read                  1342808064
+    draft b2: record reads (layers 40-42)               117
+    draft b2: expert calls (b2 compute, waves)           1363
+    draft b2: record bytes read                  1078837248
+    draft b2: record reads (layers 40-42)                94
+BD ids vs frozen: first difference at index 156 of 160 (frozen 160, new 160)
+BD ids vs frozen: first difference at index 15 of 160 (frozen 160, new 160)
+18:48:53 done
+18:49:08 BASE1017: measurement, no pass/fail. Legs P1 C1 C2 P2, 160 tokens, 2 passes, 1017 stores only. Machine: 53.9 GB RAM free, CPU 4 percent
+18:52:02 CODE_2: wall 174 s | EXIT CODE 0 | SUMMARY: 5.815 new tokens/s 7.402 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 1360, plane MB read 14912.8, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 142 (no b2 resident 142, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 438, plane MB read 4807.0, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 42 (no b2 resident 42, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching (0 b
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    scf: tokens 160, re-run 2 (1.2 percent), margin threshold 0.45, exact token differed from the cheap one in 0
+    crash-lines: 0
+19:00:25 AGENT_1: wall 503 s | EXIT CODE 0 | SUMMARY: 4.840 new tokens/s 4.751 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 1547, plane MB read 16973.0, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 234 (no b2 resident 234, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 1660, plane MB read 18219.2, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 194 (no b2 resident 194, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 4 (2.5 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    scf: tokens 160, re-run 6 (3.8 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    crash-lines: 0
+19:00:25 BD CODE_2 SUMMARY: tok/s 5.815, accepted 120 = 94.5%, draft 3.39 s;tok/s 7.402, accepted 113 = 94.2%, draft 2.98 s;  | frozen: tok/s 5.647, accepted 122 = 94.6%, draft 4.08 s;tok/s 6.010, accepted 122 = 94.6%, draft 3.79 s;
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1162
+    draft b2: record bytes read                  1859272704
+    draft b2: record reads (layers 40-42)               162
+    draft b2: expert calls (b2 compute, waves)           1097
+    draft b2: record bytes read                  1101791232
+    draft b2: record reads (layers 40-42)                96
+BD ids vs frozen: first difference at index None of 160 (frozen 160, new 160)
+BD ids vs frozen: first difference at index 36 of 160 (frozen 160, new 160)
+19:00:25 BD AGENT_1 SUMMARY: tok/s 4.840, accepted 117 = 96.7%, draft 3.62 s;tok/s 4.751, accepted 122 = 97.6%, draft 3.71 s;  | frozen: tok/s 3.889, accepted 115 = 97.5%, draft 4.75 s;tok/s 4.421, accepted 114 = 91.2%, draft 4.33 s;
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1209
+    draft b2: record bytes read                  1813364736
+    draft b2: record reads (layers 40-42)               158
+    draft b2: expert calls (b2 compute, waves)           1239
+    draft b2: record bytes read                  1778933760
+    draft b2: record reads (layers 40-42)               155
+BD ids vs frozen: first difference at index 26 of 160 (frozen 160, new 160)
+BD ids vs frozen: first difference at index 5 of 160 (frozen 160, new 160)
+19:00:26 done
+19:50:40 BASE1017: measurement, no pass/fail. Legs P1 C1 C2 P2, 160 tokens, 2 passes, 1017 stores only. Machine: 54.6 GB RAM free, CPU 8 percent
+19:54:54 R22_2: wall 253 s | EXIT CODE 0 | SUMMARY: 4.905 new tokens/s 4.400 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 2792, plane MB read 30596.9, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 361 (no b2 resident 361, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 4517, plane MB read 49518.6, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 459 (no b2 resident 459, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 8 (5.0 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    scf: tokens 160, re-run 16 (10.0 percent), margin threshold 0.45, exact token differed from the cheap one in 3
+    crash-lines: 0
+19:57:46 CODE_3: wall 172 s | EXIT CODE 0 | SUMMARY: 5.947 new tokens/s 7.336 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 1364, plane MB read 14955.8, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 168 (no b2 resident 168, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    plane: restores 220, plane MB read 2410.3, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 20 (no b2 resident 20, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching (0 b
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    scf: tokens 160, re-run 1 (0.6 percent), margin threshold 0.45, exact token differed from the cheap one in 0
+    crash-lines: 0
+20:06:09 AGENT_2: wall 503 s | EXIT CODE 0 | SUMMARY: 5.602 new tokens/s 4.795 new tokens/s  | G: bytes read (incl. background) 0
+    plane: restores 954, plane MB read 10464.6, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 167 (no b2 resident 167, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching (
+    plane: restores 1235, plane MB read 13547.3, restore ms 0.0 (summed over reader threads; drive read 0.0 ms, b2 pairing hash 0.0 ms), fallbacks to FP4 142 (no b2 resident 142, no plane 0, record refused 0, plane read failed 0); check: 0 compared, 0 mismatching 
+    scf: tokens 160, re-run 3 (1.9 percent), margin threshold 0.45, exact token differed from the cheap one in 1
+    scf: tokens 160, re-run 4 (2.5 percent), margin threshold 0.45, exact token differed from the cheap one in 2
+    crash-lines: 0
+20:06:10 BD R22_2 SUMMARY: tok/s 4.905, accepted 100 = 92.6%, draft 4.29 s;tok/s 4.400, accepted 107 = 88.4%, draft 4.28 s;  | frozen: tok/s 4.873, accepted 97 = 91.5%, draft 4.92 s;tok/s 5.414, accepted 89 = 90.8%, draft 4.82 s;
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1418
+    draft b2: record bytes read                  1250992128
+    draft b2: record reads (layers 40-42)               109
+    draft b2: expert calls (b2 compute, waves)           1353
+    draft b2: record bytes read                  1021452288
+    draft b2: record reads (layers 40-42)                89
+BD ids vs frozen: first difference at index 15 of 160 (frozen 160, new 160)
+BD ids vs frozen: first difference at index 12 of 160 (frozen 160, new 160)
+20:06:10 BD CODE_3 SUMMARY: tok/s 5.947, accepted 112 = 95.7%, draft 3.40 s;tok/s 7.336, accepted 114 = 91.2%, draft 2.89 s;  | frozen: 
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1202
+    draft b2: record bytes read                  1847795712
+    draft b2: record reads (layers 40-42)               161
+    draft b2: expert calls (b2 compute, waves)           1084
+    draft b2: record bytes read                  1078837248
+    draft b2: record reads (layers 40-42)                94
+BD ids: a file is missing ['F:/llm/exp/hilo/v41/1017/final1017/final1017_CODE_3_ids_0_native.txt', 'F:/llm/exp/hilo/v41/1017/finalbf1017/final1017_CODE_3_ids_0_native.txt']
+BD ids: a file is missing ['F:/llm/exp/hilo/v41/1017/final1017/final1017_CODE_3_ids_1_native.txt', 'F:/llm/exp/hilo/v41/1017/finalbf1017/final1017_CODE_3_ids_1_native.txt']
+20:06:10 BD AGENT_2 SUMMARY: tok/s 5.602, accepted 118 = 99.2%, draft 3.28 s;tok/s 4.795, accepted 118 = 94.4%, draft 3.57 s;  | frozen: tok/s 5.053, accepted 118 = 97.5%, draft 3.86 s;tok/s 4.697, accepted 114 = 91.9%, draft 4.13 s;
+    draft b2: ON (HILO_V41_DRAFT_B2=1): 384 layer 40-42 b2 records indexed
+    draft b2: expert calls (b2 compute, waves)           1087
+    draft b2: record bytes read                  1583824896
+    draft b2: record reads (layers 40-42)               138
+    draft b2: expert calls (b2 compute, waves)           1222
+    draft b2: record bytes read                  1733025792
+    draft b2: record reads (layers 40-42)               151
+BD ids vs frozen: first difference at index 5 of 160 (frozen 160, new 160)
+BD ids vs frozen: first difference at index 5 of 160 (frozen 160, new 160)
+20:06:11 done

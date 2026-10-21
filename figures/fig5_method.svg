@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 58 880 306" width="880" height="306" font-family="Segoe UI, Arial, sans-serif">
+  <title>How the engine produces a word</title>
+  <desc>The draft head proposes several words. Five parallel lanes compute each guessed word on the 2-bit copy of the experts. A margin gate checks whether the model's top choice is clear. Confident words are committed. Unsure words are corrected with the exact expert, rebuilt from the 2-bit copy and a stored correction plane, then committed. Experts live in GPU memory, RAM and two NVMe drives.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4a5568"/></marker>
+  </defs>
+  <rect y="58" width="880" height="306" fill="#ffffff"/>
+
+  <!-- draft head -->
+  <rect x="30" y="70" width="190" height="70" rx="8" fill="#edf2f7" stroke="#777777" stroke-width="1.5"/>
+  <text x="125" y="97" text-anchor="middle" font-size="14" font-weight="600" fill="#1a202c">Draft head</text>
+  <text x="125" y="116" text-anchor="middle" font-size="12" fill="#4a5568">supplied with the model;</text>
+  <text x="125" y="131" text-anchor="middle" font-size="12" fill="#4a5568">proposes several words</text>
+  <line x1="220" y1="105" x2="278" y2="105" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+
+  <!-- five lanes, cheap pass -->
+  <rect x="280" y="70" width="250" height="70" rx="8" fill="#FFF0C8" stroke="#1a202c" stroke-width="1.5"/>
+  <text x="405" y="97" text-anchor="middle" font-size="14" font-weight="600" fill="#1a202c">Five parallel lanes</text>
+  <text x="405" y="116" text-anchor="middle" font-size="12" fill="#4a5568">compute each guessed word</text>
+  <text x="405" y="131" text-anchor="middle" font-size="12" fill="#4a5568">on the 2-bit copy of the experts</text>
+  <line x1="530" y1="105" x2="588" y2="105" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+
+  <!-- gate -->
+  <rect x="590" y="70" width="220" height="70" rx="8" fill="#eeeeee" stroke="#1a202c" stroke-width="1.5"/>
+  <text x="700" y="97" text-anchor="middle" font-size="14" font-weight="600" fill="#1a202c">Margin gate</text>
+  <text x="700" y="116" text-anchor="middle" font-size="12" fill="#4a5568">is the model's top choice clear?</text>
+  <text x="700" y="131" text-anchor="middle" font-size="12" fill="#4a5568">(gap between top two, gate 0.45)</text>
+
+  <!-- unsure: down to exact correction -->
+  <line x1="700" y1="140" x2="700" y2="198" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+  <text x="712" y="172" font-size="12" fill="#1a202c" font-weight="600">unsure</text>
+  <rect x="590" y="200" width="220" height="70" rx="8" fill="#dddddd" stroke="#555555" stroke-width="1.5"/>
+  <text x="700" y="227" text-anchor="middle" font-size="14" font-weight="600" fill="#1a202c">Exact correction</text>
+  <text x="700" y="246" text-anchor="middle" font-size="12" fill="#4a5568">2-bit copy + correction plane</text>
+  <text x="700" y="261" text-anchor="middle" font-size="12" fill="#4a5568">= the exact FP4 expert</text>
+  <line x1="700" y1="270" x2="700" y2="308" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+
+  <!-- commit -->
+  <rect x="590" y="310" width="220" height="44" rx="8" fill="#edf2f7" stroke="#1a202c" stroke-width="1.5"/>
+  <text x="700" y="337" text-anchor="middle" font-size="14" font-weight="600" fill="#1a202c">Commit the word</text>
+  <!-- confident: right side loop to commit -->
+  <path d="M810,105 L852,105 L852,332 L812,332" fill="none" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+  <text x="814" y="98" font-size="12" fill="#1a202c" font-weight="600">confident</text>
+
+  <!-- memory tiers -->
+  <rect x="30" y="200" width="500" height="70" rx="8" fill="#f7f7f7" stroke="#777777" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="280" y="226" text-anchor="middle" font-size="14" font-weight="600" fill="#1a202c">Where the experts live</text>
+  <text x="280" y="246" text-anchor="middle" font-size="12" fill="#4a5568">GPU memory (the most-used experts)  ·  RAM  ·  two NVMe drives</text>
+  <text x="280" y="262" text-anchor="middle" font-size="12" fill="#4a5568">1,009 GiB of stores on disk</text>
+  <line x1="405" y1="200" x2="405" y2="142" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+  <line x1="530" y1="235" x2="588" y2="235" stroke="#4a5568" stroke-width="1.8" marker-end="url(#ah)"/>
+
+</svg>
