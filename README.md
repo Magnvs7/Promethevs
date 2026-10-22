@@ -9,6 +9,8 @@
 
 PROMETHEVS Technical Report 1 · version 0.1 (research preview) · Ryan Flavell, MAGNVS Ltd (ryan@magnvs.co.uk) · October 2026
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23577839.svg)](https://doi.org/10.5281/zenodo.23577839)
+
 **This release is the report, the figures and the logs behind every number. The engine program follows in a later release.**
 
 **Why.** Frontier-level AI today needs either a cloud subscription or hardware costing tens of thousands of pounds. PROMETHEVS, named after Prometheus, who in the myth brought fire to people, sets out to change that: frontier capability, at a speed close to the cloud, within 97 percent of what the original full weights would say, on a computer people already own. This release is the first step.
@@ -88,7 +90,7 @@ Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd. The report, figures, logs and text 
 
 If you use or build on this work, please cite:
 
-> Ryan Flavell. *Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC.* PROMETHEVS Technical Report 1, version 0.1. MAGNVS Ltd, October 2026. https://github.com/Magnvs7/Promethevs
+> Ryan Flavell. *Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC.* PROMETHEVS Technical Report 1, version 0.1. MAGNVS Ltd, October 2026. doi:10.5281/zenodo.23577839. https://doi.org/10.5281/zenodo.23577839
 
 GitHub's "Cite this repository" button gives the same entry from [CITATION.cff](CITATION.cff).
 

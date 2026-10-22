@@ -8,6 +8,7 @@ authors:
     affiliation: MAGNVS Ltd
     email: ryan@magnvs.co.uk
 version: "0.1"
+doi: 10.5281/zenodo.23577839
 date-released: "2026-10-21"
 license: CC-BY-4.0
 repository-code: "https://github.com/Magnvs7/Promethevs"
@@ -29,4 +30,5 @@ preferred-citation:
   number: "PROMETHEVS Technical Report 1, version 0.1"
   year: 2026
   month: 10
-  url: "https://github.com/Magnvs7/Promethevs"
+  doi: 10.5281/zenodo.23577839
+  url: "https://doi.org/10.5281/zenodo.23577839"
