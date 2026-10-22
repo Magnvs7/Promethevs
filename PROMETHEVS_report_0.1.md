@@ -1,4 +1,4 @@
-# Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC
+# Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC
 
 Ryan Flavell
 
@@ -46,11 +46,11 @@ We keep four claims apart, because they are easily confused.
 
 ## 3 The method: compress, then correct
 
-The PROMETHEVS engine produces each word in four steps (Figure 1). A round is one engine step that checks several guessed words together; a pass is one 160-token generation. We call this compress-then-correct; in the project's records it is the Promethean Method.
+The PROMETHEVS engine produces each word in four steps (Figure 1). A round is one engine step that checks several guessed words together; a pass is one 160-token generation. We call this compress-then-correct decoding; in the project's records it is the Promethean Method.
 
 ![Method](figures/fig5_method.svg)
 
-*Figure 1: Compress, then correct: how the engine produces a word. The draft head's guesses are checked together in five parallel lanes on the 2-bit copy of the experts. Words whose margin between the top two candidates falls below the gate are redone with the exact expert before they are committed.*
+*Figure 1: Compress-then-correct decoding: how the engine produces a word. The draft head's guesses are checked together in five parallel lanes on the 2-bit copy of the experts. Words whose margin between the top two candidates falls below the gate are redone with the exact expert before they are committed.*
 
 ### 3.1 The cheap pass
 

@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use or build on this work, please cite it as below."
-title: "Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC"
+title: "Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC"
 type: report
 authors:
   - family-names: Flavell
@@ -19,7 +19,7 @@ keywords:
   - consumer hardware
 preferred-citation:
   type: report
-  title: "Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC"
+  title: "Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC"
   authors:
     - family-names: Flavell
       given-names: Ryan

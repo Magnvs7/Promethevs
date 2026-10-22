@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC
+# Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC
 
 PROMETHEVS Technical Report 1 · version 0.1 (research preview) · Ryan Flavell, MAGNVS Ltd (ryan@magnvs.co.uk) · October 2026
 
@@ -88,7 +88,7 @@ Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd. The report, figures, logs and text 
 
 If you use or build on this work, please cite:
 
-> Ryan Flavell. *Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC.* PROMETHEVS Technical Report 1, version 0.1. MAGNVS Ltd, October 2026. https://github.com/Magnvs7/Promethevs
+> Ryan Flavell. *Compress-then-Correct Decoding: The Full DeepSeek-V4.1-Flash-1017 on a Five-Year-Old Gaming PC.* PROMETHEVS Technical Report 1, version 0.1. MAGNVS Ltd, October 2026. https://github.com/Magnvs7/Promethevs
 
 GitHub's "Cite this repository" button gives the same entry from [CITATION.cff](CITATION.cff).
 
