@@ -1,4 +1,9 @@
-<p align="center"><img src="figures/hero.png" alt="PROMETHEVS: Compress, then correct" width="420"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="figures/hero_transparent.png">
+    <img src="figures/hero.png" alt="PROMETHEVS: Compress, then correct" width="420">
+  </picture>
+</p>
 
 # Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC
 
