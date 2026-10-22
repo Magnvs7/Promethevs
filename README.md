@@ -82,7 +82,15 @@ We measured agreement against our own exact path; we have not yet run DeepSeek's
 
 ## Licence
 
-The contents of this repository are MIT, copyright Ryan Flavell, MAGNVS Ltd. DeepSeek-V4.1-Flash-1017 is MIT, copyright DeepSeek. Credits for third-party work are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd. The report, figures, logs and text in this repository are licensed under the [Creative Commons Attribution 4.0 International licence (CC BY 4.0)](LICENSE): you may share and adapt them for any purpose, including commercially, provided you give appropriate credit to Ryan Flavell, MAGNVS Ltd, link to the licence and say what you changed. DeepSeek-V4.1-Flash-1017 is MIT, copyright DeepSeek. Credits for third-party work are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## How to cite
+
+If you use or build on this work, please cite:
+
+> Ryan Flavell. *Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC.* PROMETHEVS Technical Report 1, version 0.1. MAGNVS Ltd, October 2026. https://github.com/Magnvs7/Promethevs
+
+GitHub's "Cite this repository" button gives the same entry from [CITATION.cff](CITATION.cff).
 
 ## Acknowledgements
 

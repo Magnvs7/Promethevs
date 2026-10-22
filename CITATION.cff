@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use or build on this work, please cite it as below."
+title: "Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC"
+type: report
+authors:
+  - family-names: Flavell
+    given-names: Ryan
+    affiliation: MAGNVS Ltd
+    email: ryan@magnvs.co.uk
+version: "0.1"
+date-released: "2026-10-21"
+license: CC-BY-4.0
+repository-code: "https://github.com/Magnvs7/Promethevs"
+keywords:
+  - mixture of experts
+  - local inference
+  - speculative decoding
+  - quantisation
+  - consumer hardware
+preferred-citation:
+  type: report
+  title: "Compress, then correct: the full DeepSeek-V4.1-Flash-1017 on a five-year-old gaming PC"
+  authors:
+    - family-names: Flavell
+      given-names: Ryan
+      affiliation: MAGNVS Ltd
+  institution:
+    name: MAGNVS Ltd
+  number: "PROMETHEVS Technical Report 1, version 0.1"
+  year: 2026
+  month: 10
+  url: "https://github.com/Magnvs7/Promethevs"
