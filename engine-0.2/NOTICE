@@ -1,0 +1,12 @@
+PROMETHEVS Engine 0.2
+Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd
+
+This product includes the PROMETHEVS Engine and compress-then-correct
+decoding, created by Ryan Flavell (MAGNVS Ltd), https://github.com/Magnvs7/Promethevs
+Technical report: doi:10.5281/zenodo.23577839
+
+Licensed under the Apache License, Version 2.0 (see LICENSE). Any
+redistribution or derivative work must carry this NOTICE file, as set out
+in section 4(d) of the License.
+
+Third-party components and their licences are listed in THIRD_PARTY_NOTICES.md.

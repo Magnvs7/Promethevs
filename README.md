@@ -11,7 +11,7 @@ PROMETHEVS Technical Report 1 · version 0.1 (research preview) · Ryan Flavell,
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23577839.svg)](https://doi.org/10.5281/zenodo.23577839)
 
-**This release is the report, the figures and the logs behind every number. The engine program follows in a later release.**
+**Release 0.2 (23 October 2026) adds the engine: an installable server that builds its stores from DeepSeek's original weights and runs the model as a local OpenAI-compatible endpoint. Download `PROMETHEVS_0.2.zip` from the [v0.2 release](https://github.com/Magnvs7/Promethevs/releases/tag/v0.2); read [engine-0.2/RELEASE_NOTES_0.2.md](engine-0.2/RELEASE_NOTES_0.2.md) and [engine-0.2/INSTALL.md](engine-0.2/INSTALL.md). Release 0.1 is the report, the figures and the logs behind every number.**
 
 **Why.** Frontier-level AI today needs either a cloud subscription or hardware costing tens of thousands of pounds. PROMETHEVS, named after Prometheus, who in the myth brought fire to people, sets out to change that: frontier capability, at a speed close to the cloud, within 97 percent of what the original full weights would say, on a computer people already own. This release is the first step.
 
@@ -66,12 +66,12 @@ The build machine is a Windows 11 desktop with 64 GB DDR4, an RTX 3060 12 GB, an
 - The technical report (PDF and Markdown) and its figures
 - The logs behind every number in it, unedited ([RESULTS.md](RESULTS.md) lists them)
 - The commands we ran to build the stores and the measurements ([REPRO.md](REPRO.md))
+- Since 0.2: the engine server, its proxy, the hardware check, the store builder and the install check, as `PROMETHEVS_0.2.zip` on the [v0.2 release](https://github.com/Magnvs7/Promethevs/releases/tag/v0.2) (docs in [engine-0.2/](engine-0.2/))
 
 ## What is not included
 
-- The engine program, its source and the build scripts. This release is the method and the measurements; the engine is planned for a later release, together with the PROMETHEVS app.
-- A one-command installer. Building the stores took many hours of hand-run scripts that use the build machine's paths.
-- A server that runs the corrected route.
+- A source rebuild that reproduces the shipped engine program byte for byte (0.2 ships it prebuilt, with its frozen build inputs; see gaps G1 and G2 in [engine-0.2/INSTALL.md](engine-0.2/INSTALL.md)).
+- A clean install of 0.2 on a second machine has not been run yet.
 - A reproduction on a second machine, and a demo of a real agent session.
 
 ## Limits
@@ -85,6 +85,8 @@ We measured agreement against our own exact path; we have not yet run DeepSeek's
 ## Licence
 
 Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd. The report, figures, logs and text in this repository are licensed under the [Creative Commons Attribution 4.0 International licence (CC BY 4.0)](LICENSE): you may share and adapt them for any purpose, including commercially, provided you give appropriate credit to Ryan Flavell, MAGNVS Ltd, link to the licence and say what you changed. DeepSeek-V4.1-Flash-1017 is MIT, copyright DeepSeek. Credits for third-party work are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+The engine, scripts and tools of release 0.2 (`PROMETHEVS_0.2.zip`) are Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd, licensed under the [Apache License 2.0](engine-0.2/LICENSE); every copy and derived work must keep the [NOTICE](engine-0.2/NOTICE) file. Third-party parts of the bundle keep their own licences ([engine-0.2/THIRD_PARTY_NOTICES.md](engine-0.2/THIRD_PARTY_NOTICES.md)).
 
 ## How to cite
 
