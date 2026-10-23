@@ -63,7 +63,7 @@ The build machine is a Windows 11 desktop with 64 GB DDR4, an RTX 3060 12 GB, an
 
 ## Results from other machines
 
-Every number above comes from one PC. If you run release 0.2 on your own machine, please send the output of `python scripts\pyerify_install.py --speed` and your engine log as a [benchmark report](https://github.com/Magnvs7/Promethevs/issues/new?template=benchmark_report.md). Reports are added here as they arrive.
+Every number above comes from one PC. If you run release 0.2 on your own machine, please send the output of `python scripts\py\verify_install.py --speed` and your engine log as a [benchmark report](https://github.com/Magnvs7/Promethevs/issues/new?template=benchmark_report.md). Reports are added here as they arrive.
 
 | Machine | CPU | RAM | GPU | Code, warm (tok/s, generation only) | Reasoning / agent, warm (tok/s) | Reported by |
 |---|---|---|---|---|---|---|
@@ -88,7 +88,7 @@ We measured agreement against our own exact path; we have not yet run DeepSeek's
 
 ## Reproduce
 
-[REPRO.md](REPRO.md) outlines the steps we ran: download and verify the weights, build the stores, set the profile, run the benchmark. The scripts themselves are not part of this release.
+[REPRO.md](REPRO.md) outlines the steps we ran: download and verify the weights, build the stores, set the profile, run the benchmark. The scripts themselves ship in release 0.2 (`PROMETHEVS_0.2.zip`, see [engine-0.2/INSTALL.md](engine-0.2/INSTALL.md)).
 
 ## Licence
 
