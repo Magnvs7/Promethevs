@@ -61,6 +61,14 @@ We call this compress-then-correct. Speculative decoding, quantised drafts and o
 
 The build machine is a Windows 11 desktop with 64 GB DDR4, an RTX 3060 12 GB, and two NVMe drives (2 TB and 1 TB). The stores need about **1,009 GiB**: 475 GiB of raw weights plus 534 GiB of derived stores (2-bit copies, correction planes, and FP4 copies of the first layers). Disk is the largest barrier for anyone repeating this. We kept each drive below about 90 percent full.
 
+## Results from other machines
+
+Every number above comes from one PC. If you run release 0.2 on your own machine, please send the output of `python scripts\pyerify_install.py --speed` and your engine log as a [benchmark report](https://github.com/Magnvs7/Promethevs/issues/new?template=benchmark_report.md). Reports are added here as they arrive.
+
+| Machine | CPU | RAM | GPU | Code, warm (tok/s, generation only) | Reasoning / agent, warm (tok/s) | Reported by |
+|---|---|---|---|---|---|---|
+| Build PC | Ryzen 9 3950X | 64 GB DDR4 | RTX 3060 12 GB | 5.1-8.0 (two runs, 23 Oct); report best case 7.4 | 4.5-5.4 | Ryan Flavell |
+
 ## What is included
 
 - The technical report (PDF and Markdown) and its figures
