@@ -141,6 +141,15 @@ We measured agreement against our own exact path; we have not yet run DeepSeek's
 
 [REPRO.md](REPRO.md) outlines the steps we ran: download and verify the weights, build the stores, set the profile, run the benchmark. The scripts themselves ship in release 0.2 (`PROMETHEVS_0.2.zip`, see [engine-0.2/INSTALL.md](engine-0.2/INSTALL.md)).
 
+## Support
+
+PROMETHEVS is just me, on my everyday home PC with one RTX 3060. No team, no lab, and no other GPUs to test on.
+
+The engine is free (Apache-2.0). If it’s useful to you and you want to help me keep putting time into it, you can support me here: https://github.com/sponsors/Magnvs7
+
+Running it on your own rig helps too. If you’ve got Windows, 64 GB RAM, a 12 GB+ RTX 30/40 card and about 1.1 TB of NVMe, post your numbers with the benchmark form:
+https://github.com/Magnvs7/Promethevs/issues/new?template=benchmark_report.md
+
 ## Licence
 
 Copyright (c) 2026 Ryan Flavell, MAGNVS Ltd. The report, figures, logs and text in this repository are licensed under the [Creative Commons Attribution 4.0 International licence (CC BY 4.0)](LICENSE): you may share and adapt them for any purpose, including commercially, provided you give appropriate credit to Ryan Flavell, MAGNVS Ltd, link to the licence and say what you changed. DeepSeek-V4.1-Flash-1017 is MIT, copyright DeepSeek. Credits for third-party work are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
