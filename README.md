@@ -13,6 +13,7 @@
   <a href="https://github.com/Magnvs7/Promethevs/releases/latest"><img src="https://img.shields.io/github/v/release/Magnvs7/Promethevs?label=release" alt="Latest release"></a>
   <a href="engine-0.2/LICENSE"><img src="https://img.shields.io/badge/engine-Apache--2.0-blue" alt="Engine licence: Apache-2.0"></a>
   <a href="https://doi.org/10.5281/zenodo.23577839"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23577839.svg" alt="DOI"></a>
+  <a href="https://github.com/sponsors/Magnvs7"><img src="https://img.shields.io/badge/Support-Magnvs7-FFB100?logo=githubsponsors&logoColor=white" alt="Support"></a>
 </p>
 
 PROMETHEVS runs **DeepSeek-V4.1-Flash-1017**, one of the strongest open models, from all 510 GB of its original weights, on an ordinary PC that cannot even load it: a Ryzen 9 3950X with 64 GB of DDR4, an RTX 3060 with 12 GB and two NVMe drives.
