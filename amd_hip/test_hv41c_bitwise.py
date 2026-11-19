@@ -2,6 +2,7 @@ import ctypes
 import os
 import re
 import sys
+import threading
 import time
 import numpy as np
 
@@ -1203,79 +1204,246 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
             assert h
             return h, c, s
 
-        # seq_shared
-        K_in, N_mid, N_out = 256, 128, 256
-        h_g, cg, sg = _up_fp8(N_mid, K_in)
-        h_u, cu, su = _up_fp8(N_mid, K_in)
-        h_d, cd, sd = _up_fp8(N_out, N_mid)
-        av_in = rng.integers(-200, 201, size=(1, K_in), dtype=np.int32)
-        sv_in = rng.uniform(0.5, 1.5, size=(1, K_in // 32)).astype(np.float32)
-        y_shx = np.empty(N_out, dtype=np.float32)
-        assert dll.hv41c_seq_shared(av_in.ctypes.data, sv_in.ctypes.data, h_g, h_u, h_d, y_shx.ctypes.data, None) == 0
-        rg = cpu_ref_hv41f_exact_i64(cg, sg, av_in, sv_in).view(np.float32)[0]
-        ru = cpu_ref_hv41f_exact_i64(cu, su, av_in, sv_in).view(np.float32)[0]
-        mid_f32 = np.empty(N_mid, dtype=np.float32)
-        for i in range(N_mid):
-            gv = min(10.0, float(rg[i]))
-            uv = max(-10.0, min(10.0, float(ru[i])))
-            silu = np.float32(gv / (1.0 + np.exp(-np.float32(gv))))
-            mid_f32[i] = round_bf16_in_f32_u32(np.array([np.float32(silu * np.float32(uv))], dtype=np.float32)).view(np.float32)[0]
-        av_m, sv_m = _cpu_act_quant32(mid_f32)
-        ref_shx = cpu_ref_hv41f_exact_i64(cd, sd, av_m.reshape(1, -1), sv_m.reshape(1, -1))[0]
-        bad_shx = int(np.count_nonzero(y_shx.view(np.uint32) != ref_shx))
-        print(f"  seq_shared K={K_in} mid={N_mid} out={N_out}: outputs={N_out}, mismatches={bad_shx}")
-        total_out += N_out
-        total_bad += bad_shx
+        # seq_shared: fused w8 (K=256), fused w16 (K=512), and unfused fallback (K=192)
+        for (tag, K_in, N_mid, N_out) in [
+            ("fused_w8", 256, 128, 256),
+            ("fused_w16", 512, 128, 256),
+            ("fallback", 192, 128, 256),
+        ]:
+            h_g, cg, sg = _up_fp8(N_mid, K_in)
+            h_u, cu, su = _up_fp8(N_mid, K_in)
+            h_d, cd, sd = _up_fp8(N_out, N_mid)
+            av_in = rng.integers(-200, 201, size=(1, K_in), dtype=np.int32)
+            sv_in = rng.uniform(0.5, 1.5, size=(1, K_in // 32)).astype(np.float32)
+            y_shx = np.empty(N_out, dtype=np.float32)
+            assert dll.hv41c_seq_shared(av_in.ctypes.data, sv_in.ctypes.data, h_g, h_u, h_d, y_shx.ctypes.data, None) == 0
+            rg = cpu_ref_hv41f_exact_i64(cg, sg, av_in, sv_in).view(np.float32)[0]
+            ru = cpu_ref_hv41f_exact_i64(cu, su, av_in, sv_in).view(np.float32)[0]
+            mid_f32 = np.empty(N_mid, dtype=np.float32)
+            for i in range(N_mid):
+                gv = min(10.0, float(rg[i]))
+                uv = max(-10.0, min(10.0, float(ru[i])))
+                silu = np.float32(gv / (1.0 + np.exp(-np.float32(gv))))
+                mid_f32[i] = round_bf16_in_f32_u32(np.array([np.float32(silu * np.float32(uv))], dtype=np.float32)).view(np.float32)[0]
+            av_m, sv_m = _cpu_act_quant32(mid_f32)
+            ref_shx = cpu_ref_hv41f_exact_i64(cd, sd, av_m.reshape(1, -1), sv_m.reshape(1, -1))[0]
+            bad_shx = int(np.count_nonzero(y_shx.view(np.uint32) != ref_shx))
+            print(f"  seq_shared[{tag}] K={K_in} mid={N_mid} out={N_out}: outputs={N_out}, mismatches={bad_shx}")
+            total_out += N_out
+            total_bad += bad_shx
 
-        # seq_back
+        # seq_back: fused mode=1 (bf16_w32_quant32) + fallback mode=0 (bf16_seq)
         w_f32 = rng.standard_normal((128, 256), dtype=np.float32) * 0.25
         w_u16 = (round_bf16_in_f32_u32(w_f32) >> np.uint32(16)).astype(np.uint16)
         h_bf = dll.hv41c_upload_bf16(w_u16.ctypes.data, 128, 256)
         x_b = rng.standard_normal((1, 512), dtype=np.float32) * 0.25
         h_bo, cbo, sbo = _up_fp8(64, 128)
-        y_bk = np.empty(64, dtype=np.float32)
-        assert dll.hv41c_seq_back(h_bf, x_b.ctypes.data, 64, 512, 1, 1, h_bo, y_bk.ctypes.data, None) == 0
-        ref_mid_b = _cpu_bf16_w32_ref(w_u16, x_b, 1, 128, 256, 64, 512, 1).view(np.float32)[0]
-        av_b, sv_b = _cpu_act_quant32(ref_mid_b)
-        ref_bk = cpu_ref_hv41f_exact_i64(cbo, sbo, av_b.reshape(1, -1), sv_b.reshape(1, -1))[0]
-        bad_bk = int(np.count_nonzero(y_bk.view(np.uint32) != ref_bk))
-        print(f"  seq_back  N_mid=128 out=64: outputs=64, mismatches={bad_bk}")
-        total_out += 64
-        total_bad += bad_bk
+        for mode_b, tag_b in [(1, "fused_w32"), (0, "fallback_seq")]:
+            y_bk = np.empty(64, dtype=np.float32)
+            assert dll.hv41c_seq_back(h_bf, x_b.ctypes.data, 64, 512, mode_b, 1, h_bo, y_bk.ctypes.data, None) == 0
+            if mode_b == 0:
+                ref_mid_b = _cpu_bf16_seq_ref(w_u16, x_b, 1, 128, 256, 64, 512, 1).view(np.float32)[0]
+            else:
+                ref_mid_b = _cpu_bf16_w32_ref(w_u16, x_b, 1, 128, 256, 64, 512, 1).view(np.float32)[0]
+            av_b, sv_b = _cpu_act_quant32(ref_mid_b)
+            ref_bk = cpu_ref_hv41f_exact_i64(cbo, sbo, av_b.reshape(1, -1), sv_b.reshape(1, -1))[0]
+            bad_bk = int(np.count_nonzero(y_bk.view(np.uint32) != ref_bk))
+            print(f"  seq_back[{tag_b}] N_mid=128 out=64: outputs=64, mismatches={bad_bk}")
+            total_out += 64
+            total_bad += bad_bk
 
-        # seq_front
-        h_kv, ckv, skv = _up_fp8(64, 256)
-        h_qa, cqa, sqa = _up_fp8(128, 256)
-        h_qb, cqb, sqb = _up_fp8(128, 128)
-        qn_host = rng.uniform(0.5, 1.5, size=128).astype(np.float32)
-        qn_dev = dll.hv41c_seq_upload_f32(qn_host.ctypes.data, 128)
-        assert qn_dev
-        y_kv = np.empty(64, dtype=np.float32)
-        y_qa = np.empty(128, dtype=np.float32)
-        y_qb = np.empty(128, dtype=np.float32)
-        w3_arr = (ctypes.c_void_p * 2)(h_kv, h_qa)
-        wq_arr = (ctypes.c_void_p * 2)(h_qb, None)
-        op_arr = (ctypes.c_void_p * 2)(y_kv.ctypes.data, None)
-        yqp_arr = (ctypes.c_void_p * 2)(y_qb.ctypes.data, None)
-        assert dll.hv41c_seq_front(
-            av_in.ctypes.data, sv_in.ctypes.data, w3_arr, 2, 1,
-            qn_dev, np.float32(1e-6), wq_arr, 1,
-            op_arr, y_qa.ctypes.data, yqp_arr, None,
-        ) == 0
-        ref_kv = cpu_ref_hv41f_exact_i64(ckv, skv, av_in, sv_in)[0]
-        raw_qa = cpu_ref_hv41f_exact_i64(cqa, sqa, av_in, sv_in).view(np.float32)[0]
-        rms_inv = np.float32(1.0) / np.float32(np.sqrt(float(np.sum(raw_qa * raw_qa)) / 128.0 + 1e-6))
-        ref_qa_u32 = round_bf16_in_f32_u32((rms_inv * raw_qa * qn_host).astype(np.float32))
-        av_q, sv_q = _cpu_act_quant32(ref_qa_u32.view(np.float32))
-        ref_qb = cpu_ref_hv41f_exact_i64(cqb, sqb, av_q.reshape(1, -1), sv_q.reshape(1, -1))[0]
-        bad_fr = (
-            int(np.count_nonzero(y_kv.view(np.uint32) != ref_kv))
-            + int(np.count_nonzero(y_qa.view(np.uint32) != ref_qa_u32))
-            + int(np.count_nonzero(y_qb.view(np.uint32) != ref_qb))
-        )
-        print(f"  seq_front kv=64 qa=128 qb=128: outputs={64+128+128}, mismatches={bad_fr}")
-        total_out += 64 + 128 + 128
-        total_bad += bad_fr
+        # seq_front: n_q=1 (w8), n_q=2 (w16 + rmsnorm + w8 iqb pair), and n_q=2 unfused fallback (K=192)
+        for (tag_f, K_in_f, K_qa_f, kv_n, qb_n, iqb_n) in [
+            ("w8_nq1", 256, 128, 64, 128, 0),
+            ("w16_nq2", 512, 256, 64, 128, 64),
+            ("fallback_nq2", 192, 128, 64, 128, 64),
+        ]:
+            h_kv, ckv, skv = _up_fp8(kv_n, K_in_f)
+            h_qa, cqa, sqa = _up_fp8(K_qa_f, K_in_f)
+            h_qb, cqb, sqb = _up_fp8(qb_n, K_qa_f)
+            has_iqb = iqb_n > 0
+            if has_iqb:
+                h_iqb, ciqb, siqb = _up_fp8(iqb_n, K_qa_f)
+            else:
+                h_iqb, ciqb, siqb = None, None, None
+            qn_host = rng.uniform(0.5, 1.5, size=K_qa_f).astype(np.float32)
+            qn_dev = dll.hv41c_seq_upload_f32(qn_host.ctypes.data, K_qa_f)
+            assert qn_dev
+            av_f = rng.integers(-200, 201, size=(1, K_in_f), dtype=np.int32)
+            sv_f = rng.uniform(0.5, 1.5, size=(1, K_in_f // 32)).astype(np.float32)
+            y_kv = np.empty(kv_n, dtype=np.float32)
+            y_qa = np.empty(K_qa_f, dtype=np.float32)
+            y_qb = np.empty(qb_n, dtype=np.float32)
+            y_iqb = np.empty(iqb_n, dtype=np.float32) if has_iqb else None
+            w3_arr = (ctypes.c_void_p * 2)(h_kv, h_qa)
+            wq_arr = (ctypes.c_void_p * 2)(h_qb, h_iqb)
+            op_arr = (ctypes.c_void_p * 2)(y_kv.ctypes.data, None)
+            yqp_arr = (ctypes.c_void_p * 2)(y_qb.ctypes.data, y_iqb.ctypes.data if has_iqb else None)
+            assert dll.hv41c_seq_front(
+                av_f.ctypes.data, sv_f.ctypes.data, w3_arr, 2, 1,
+                qn_dev, np.float32(1e-6), wq_arr, 2 if has_iqb else 1,
+                op_arr, y_qa.ctypes.data, yqp_arr, None,
+            ) == 0
+            ref_kv = cpu_ref_hv41f_exact_i64(ckv, skv, av_f, sv_f)[0]
+            raw_qa = cpu_ref_hv41f_exact_i64(cqa, sqa, av_f, sv_f).view(np.float32)[0]
+            rms_inv = np.float32(1.0) / np.float32(np.sqrt(float(np.sum(raw_qa * raw_qa)) / float(K_qa_f) + 1e-6))
+            ref_qa_u32 = round_bf16_in_f32_u32((rms_inv * raw_qa * qn_host).astype(np.float32))
+            av_q, sv_q = _cpu_act_quant32(ref_qa_u32.view(np.float32))
+            ref_qb = cpu_ref_hv41f_exact_i64(cqb, sqb, av_q.reshape(1, -1), sv_q.reshape(1, -1))[0]
+            bad_fr = (
+                int(np.count_nonzero(y_kv.view(np.uint32) != ref_kv))
+                + int(np.count_nonzero(y_qa.view(np.uint32) != ref_qa_u32))
+                + int(np.count_nonzero(y_qb.view(np.uint32) != ref_qb))
+            )
+            n_fr = kv_n + K_qa_f + qb_n
+            if has_iqb:
+                ref_iqb = cpu_ref_hv41f_exact_i64(ciqb, siqb, av_q.reshape(1, -1), sv_q.reshape(1, -1))[0]
+                bad_fr += int(np.count_nonzero(y_iqb.view(np.uint32) != ref_iqb))
+                n_fr += iqb_n
+            print(f"  seq_front[{tag_f}] K={K_in_f} kv={kv_n} qa={K_qa_f} qb={qb_n} iqb={iqb_n}: outputs={n_fr}, mismatches={bad_fr}")
+            total_out += n_fr
+            total_bad += bad_fr
+
+        # 5-thread concurrent SlotPool stress test (20 iterations per thread)
+        if not isinstance(dll, DirectHipHv41c):
+            # Thread 0: hv41c_linear (rows=1 & rows=3)
+            h_lin, clin, slin = _up_fp8(128, 512)
+            a_lin1 = rng.integers(-300, 301, size=(1, 512), dtype=np.int32)
+            s_lin1 = rng.uniform(0.5, 1.5, size=(1, 16)).astype(np.float32)
+            ref_lin1 = cpu_ref_hv41f_exact_i64(clin, slin, a_lin1, s_lin1)
+            a_lin3 = rng.integers(-300, 301, size=(3, 512), dtype=np.int32)
+            s_lin3 = rng.uniform(0.5, 1.5, size=(3, 16)).astype(np.float32)
+            ref_lin3 = cpu_ref_hv41f_exact_i64(clin, slin, a_lin3, s_lin3)
+
+            # Thread 1: hv41c_bf16_w32 (M=1 & M=2)
+            w_t1_f32 = rng.standard_normal((128, 256), dtype=np.float32) * 0.25
+            w_t1_u16 = (round_bf16_in_f32_u32(w_t1_f32) >> np.uint32(16)).astype(np.uint16)
+            h_t1 = dll.hv41c_upload_bf16(w_t1_u16.ctypes.data, 128, 256)
+            x_t1_1 = rng.standard_normal((1, 512), dtype=np.float32) * 0.25
+            ref_t1_1 = _cpu_bf16_w32_ref(w_t1_u16, x_t1_1, 1, 128, 256, 64, 512, 1)
+            x_t1_2 = rng.standard_normal((2, 512), dtype=np.float32) * 0.25
+            ref_t1_2 = _cpu_bf16_w32_ref(w_t1_u16, x_t1_2, 2, 128, 256, 64, 512, 1)
+
+            # Thread 2: hv41c_seq_shared K=512 (fused w16)
+            h_t2_g, ct2g, st2g = _up_fp8(128, 512)
+            h_t2_u, ct2u, st2u = _up_fp8(128, 512)
+            h_t2_d, ct2d, st2d = _up_fp8(256, 128)
+            av_t2 = rng.integers(-200, 201, size=(1, 512), dtype=np.int32)
+            sv_t2 = rng.uniform(0.5, 1.5, size=(1, 16)).astype(np.float32)
+            rg2 = cpu_ref_hv41f_exact_i64(ct2g, st2g, av_t2, sv_t2).view(np.float32)[0]
+            ru2 = cpu_ref_hv41f_exact_i64(ct2u, st2u, av_t2, sv_t2).view(np.float32)[0]
+            mid2 = np.empty(128, dtype=np.float32)
+            for i in range(128):
+                gv2 = min(10.0, float(rg2[i]))
+                uv2 = max(-10.0, min(10.0, float(ru2[i])))
+                s2 = np.float32(gv2 / (1.0 + np.exp(-np.float32(gv2))))
+                mid2[i] = round_bf16_in_f32_u32(np.array([np.float32(s2 * np.float32(uv2))], dtype=np.float32)).view(np.float32)[0]
+            av2m, sv2m = _cpu_act_quant32(mid2)
+            ref_t2 = cpu_ref_hv41f_exact_i64(ct2d, st2d, av2m.reshape(1, -1), sv2m.reshape(1, -1))[0]
+
+            # Thread 3: hv41c_seq_back mode=1 (fused)
+            w_t3_f32 = rng.standard_normal((128, 256), dtype=np.float32) * 0.25
+            w_t3_u16 = (round_bf16_in_f32_u32(w_t3_f32) >> np.uint32(16)).astype(np.uint16)
+            h_t3_bf = dll.hv41c_upload_bf16(w_t3_u16.ctypes.data, 128, 256)
+            h_t3_o, ct3o, st3o = _up_fp8(64, 128)
+            x_t3 = rng.standard_normal((1, 512), dtype=np.float32) * 0.25
+            mid3 = _cpu_bf16_w32_ref(w_t3_u16, x_t3, 1, 128, 256, 64, 512, 1).view(np.float32)[0]
+            av3m, sv3m = _cpu_act_quant32(mid3)
+            ref_t3 = cpu_ref_hv41f_exact_i64(ct3o, st3o, av3m.reshape(1, -1), sv3m.reshape(1, -1))[0]
+
+            # Thread 4: hv41c_seq_front K=512 n_q=2
+            h_t4_kv, ct4kv, st4kv = _up_fp8(64, 512)
+            h_t4_qa, ct4qa, st4qa = _up_fp8(256, 512)
+            h_t4_qb, ct4qb, st4qb = _up_fp8(128, 256)
+            h_t4_iqb, ct4iqb, st4iqb = _up_fp8(64, 256)
+            qn_t4_h = rng.uniform(0.5, 1.5, size=256).astype(np.float32)
+            qn_t4_d = dll.hv41c_seq_upload_f32(qn_t4_h.ctypes.data, 256)
+            av_t4 = rng.integers(-200, 201, size=(1, 512), dtype=np.int32)
+            sv_t4 = rng.uniform(0.5, 1.5, size=(1, 16)).astype(np.float32)
+            ref_t4_kv = cpu_ref_hv41f_exact_i64(ct4kv, st4kv, av_t4, sv_t4)[0]
+            raw_t4_qa = cpu_ref_hv41f_exact_i64(ct4qa, st4qa, av_t4, sv_t4).view(np.float32)[0]
+            rinv4 = np.float32(1.0) / np.float32(np.sqrt(float(np.sum(raw_t4_qa * raw_t4_qa)) / 256.0 + 1e-6))
+            ref_t4_qa = round_bf16_in_f32_u32((rinv4 * raw_t4_qa * qn_t4_h).astype(np.float32))
+            av4q, sv4q = _cpu_act_quant32(ref_t4_qa.view(np.float32))
+            ref_t4_qb = cpu_ref_hv41f_exact_i64(ct4qb, st4qb, av4q.reshape(1, -1), sv4q.reshape(1, -1))[0]
+            ref_t4_iqb = cpu_ref_hv41f_exact_i64(ct4iqb, st4iqb, av4q.reshape(1, -1), sv4q.reshape(1, -1))[0]
+
+            barrier = threading.Barrier(5)
+            thread_res = [None] * 5
+
+            def _worker(tid: int):
+                try:
+                    barrier.wait()
+                    n_chk = 0
+                    bad_chk = 0
+                    if tid == 0:
+                        o1 = np.empty((1, 128), dtype=np.float32)
+                        o3 = np.empty((3, 128), dtype=np.float32)
+                        for _ in range(20):
+                            assert dll.hv41c_linear(h_lin, a_lin1.ctypes.data, s_lin1.ctypes.data, 1, o1.ctypes.data, None) == 0
+                            assert dll.hv41c_linear(h_lin, a_lin3.ctypes.data, s_lin3.ctypes.data, 3, o3.ctypes.data, None) == 0
+                            bad_chk += int(np.count_nonzero(o1.view(np.uint32) != ref_lin1))
+                            bad_chk += int(np.count_nonzero(o3.view(np.uint32) != ref_lin3))
+                            n_chk += o1.size + o3.size
+                    elif tid == 1:
+                        y1 = np.empty((1, 128), dtype=np.float32)
+                        y2 = np.empty((2, 128), dtype=np.float32)
+                        for _ in range(20):
+                            assert dll.hv41c_bf16_w32(h_t1, x_t1_1.ctypes.data, 1, 64, 512, 1, y1.ctypes.data, None) == 0
+                            assert dll.hv41c_bf16_w32(h_t1, x_t1_2.ctypes.data, 2, 64, 512, 1, y2.ctypes.data, None) == 0
+                            bad_chk += int(np.count_nonzero(y1.view(np.uint32) != ref_t1_1))
+                            bad_chk += int(np.count_nonzero(y2.view(np.uint32) != ref_t1_2))
+                            n_chk += y1.size + y2.size
+                    elif tid == 2:
+                        ys = np.empty(256, dtype=np.float32)
+                        for _ in range(20):
+                            assert dll.hv41c_seq_shared(av_t2.ctypes.data, sv_t2.ctypes.data, h_t2_g, h_t2_u, h_t2_d, ys.ctypes.data, None) == 0
+                            bad_chk += int(np.count_nonzero(ys.view(np.uint32) != ref_t2))
+                            n_chk += ys.size
+                    elif tid == 3:
+                        yb = np.empty(64, dtype=np.float32)
+                        for _ in range(20):
+                            assert dll.hv41c_seq_back(h_t3_bf, x_t3.ctypes.data, 64, 512, 1, 1, h_t3_o, yb.ctypes.data, None) == 0
+                            bad_chk += int(np.count_nonzero(yb.view(np.uint32) != ref_t3))
+                            n_chk += yb.size
+                    elif tid == 4:
+                        ykv = np.empty(64, dtype=np.float32)
+                        yqa = np.empty(256, dtype=np.float32)
+                        yqb = np.empty(128, dtype=np.float32)
+                        yiqb = np.empty(64, dtype=np.float32)
+                        w3a = (ctypes.c_void_p * 2)(h_t4_kv, h_t4_qa)
+                        wqa = (ctypes.c_void_p * 2)(h_t4_qb, h_t4_iqb)
+                        opa = (ctypes.c_void_p * 2)(ykv.ctypes.data, None)
+                        yqpa = (ctypes.c_void_p * 2)(yqb.ctypes.data, yiqb.ctypes.data)
+                        for _ in range(20):
+                            assert dll.hv41c_seq_front(
+                                av_t4.ctypes.data, sv_t4.ctypes.data, w3a, 2, 1,
+                                qn_t4_d, np.float32(1e-6), wqa, 2,
+                                opa, yqa.ctypes.data, yqpa, None,
+                            ) == 0
+                            bad_chk += (
+                                int(np.count_nonzero(ykv.view(np.uint32) != ref_t4_kv))
+                                + int(np.count_nonzero(yqa.view(np.uint32) != ref_t4_qa))
+                                + int(np.count_nonzero(yqb.view(np.uint32) != ref_t4_qb))
+                                + int(np.count_nonzero(yiqb.view(np.uint32) != ref_t4_iqb))
+                            )
+                            n_chk += ykv.size + yqa.size + yqb.size + yiqb.size
+                    thread_res[tid] = (n_chk, bad_chk, None)
+                except Exception as exc:
+                    thread_res[tid] = (0, 1, repr(exc))
+
+            threads = [threading.Thread(target=_worker, args=(t,)) for t in range(5)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+            for tid, res in enumerate(thread_res):
+                assert res is not None and res[2] is None, f"concurrent thread {tid} error: {res}"
+            conc_out = sum(r[0] for r in thread_res)
+            conc_bad = sum(r[1] for r in thread_res)
+            print(f"  slotpool  5-thread x 20-iter concurrent stress: outputs={conc_out}, mismatches={conc_bad}")
+            total_out += conc_out
+            total_bad += conc_bad
 
     # corr: hv41_plane_restore_kernel + hv41_fp4_linear_kernel (tested via DirectHipHv41c or dll)
     if isinstance(dll, DirectHipHv41c):

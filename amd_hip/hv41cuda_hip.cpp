@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <immintrin.h>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -104,6 +105,10 @@ constexpr int HIP_MEMCPY_HOST_TO_DEVICE = 1;
 constexpr int HIP_MEMCPY_DEVICE_TO_HOST = 2;
 constexpr int HIP_MEMCPY_DEVICE_TO_DEVICE = 3;
 constexpr int HIP_DEVICE_ATTR_MP_COUNT = 63;
+constexpr unsigned int HIP_DEVICE_SCHEDULE_BLOCKING_SYNC = 4u;
+constexpr unsigned int HIP_STREAM_NON_BLOCKING = 1u;
+constexpr unsigned int HIP_EVENT_DISABLE_TIMING = 2u;
+constexpr unsigned int HIP_HOST_MALLOC_PORTABLE_MAPPED = 3u;
 
 struct HipApi {
     HMODULE mod = nullptr;
@@ -111,6 +116,7 @@ struct HipApi {
     const char* (*getErrorString)(int) = nullptr;
     int (*init)(unsigned int) = nullptr;
     int (*setDevice)(int) = nullptr;
+    int (*setDeviceFlags)(unsigned int) = nullptr;
     int (*deviceGetName)(char*, int, int) = nullptr;
     int (*deviceComputeCapability)(int*, int*, int) = nullptr;
     int (*deviceGetAttribute)(int*, int, int) = nullptr;
@@ -120,14 +126,18 @@ struct HipApi {
     int (*malloc)(void**, size_t) = nullptr;
     int (*free)(void*) = nullptr;
     int (*hostMalloc)(void**, size_t, unsigned int) = nullptr;
+    int (*hostGetDevicePointer)(void**, void*, unsigned int) = nullptr;
     int (*hostFree)(void*) = nullptr;
     int (*memcpy)(void*, const void*, size_t, int) = nullptr;
     int (*memcpyAsync)(void*, const void*, size_t, int, void*) = nullptr;
     int (*streamCreate)(void**) = nullptr;
+    int (*streamCreateWithFlags)(void**, unsigned int) = nullptr;
     int (*streamSynchronize)(void*) = nullptr;
     int (*streamWaitEvent)(void*, void*, unsigned int) = nullptr;
     int (*eventCreate)(void**) = nullptr;
+    int (*eventCreateWithFlags)(void**, unsigned int) = nullptr;
     int (*eventRecord)(void*, void*) = nullptr;
+    int (*eventQuery)(void*) = nullptr;
     int (*eventSynchronize)(void*) = nullptr;
     int (*eventElapsedTime)(float*, void*, void*) = nullptr;
     int (*moduleLaunchKernel)(
@@ -147,6 +157,7 @@ struct HipApi {
         LOAD_H(getErrorString, "hipGetErrorString");
         LOAD_H(init, "hipInit");
         LOAD_H(setDevice, "hipSetDevice");
+        LOAD_H(setDeviceFlags, "hipSetDeviceFlags");
         LOAD_H(deviceGetName, "hipDeviceGetName");
         LOAD_H(deviceComputeCapability, "hipDeviceComputeCapability");
         LOAD_H(deviceGetAttribute, "hipDeviceGetAttribute");
@@ -156,14 +167,18 @@ struct HipApi {
         LOAD_H(malloc, "hipMalloc");
         LOAD_H(free, "hipFree");
         LOAD_H(hostMalloc, "hipHostMalloc");
+        LOAD_H(hostGetDevicePointer, "hipHostGetDevicePointer");
         LOAD_H(hostFree, "hipHostFree");
         LOAD_H(memcpy, "hipMemcpy");
         LOAD_H(memcpyAsync, "hipMemcpyAsync");
         LOAD_H(streamCreate, "hipStreamCreate");
+        LOAD_H(streamCreateWithFlags, "hipStreamCreateWithFlags");
         LOAD_H(streamSynchronize, "hipStreamSynchronize");
         LOAD_H(streamWaitEvent, "hipStreamWaitEvent");
         LOAD_H(eventCreate, "hipEventCreate");
+        LOAD_H(eventCreateWithFlags, "hipEventCreateWithFlags");
         LOAD_H(eventRecord, "hipEventRecord");
+        LOAD_H(eventQuery, "hipEventQuery");
         LOAD_H(eventSynchronize, "hipEventSynchronize");
         LOAD_H(eventElapsedTime, "hipEventElapsedTime");
         LOAD_H(moduleLaunchKernel, "hipModuleLaunchKernel");
@@ -299,21 +314,18 @@ extern "C" __global__ void hv41_fp8_linear_m1(
 // Multi-wave M=1 kernel: WAVES wave32s per 32-col workgroup share LDS activation/scale-free
 // 256-entry E4M3 LUT and 32x32 float term buffer, summing exact K-blocks sequentially on wave 0.
 template<int WAVES>
-__device__ static __inline__ void fp8_m1_mw_lut_impl(
+__device__ static __inline__ void fp8_m1_mw_lut_nb(
     const unsigned int* __restrict__ packed_codes,
     const signed char*  __restrict__ scales,
     const int*          __restrict__ a,
     const float*        __restrict__ s,
     float*              __restrict__ out,
-    int N,
+    int nb,
     int K)
 {
-    int nb   = (int)__builtin_amdgcn_workgroup_id_x();
     int tid  = (int)__builtin_amdgcn_workitem_id_x();
     int lane = tid & 31;
     int wy   = tid >> 5;
-    int nnb  = N >> 5;
-    if (nb >= nnb) return;
 
     __attribute__((shared)) static float s_term[32][32];
     __attribute__((shared)) static int   s_lut[256];
@@ -369,6 +381,48 @@ __device__ static __inline__ void fp8_m1_mw_lut_impl(
     }
 }
 
+template<int WAVES>
+__device__ static __inline__ void fp8_m1_mw_lut_impl(
+    const unsigned int* __restrict__ packed_codes,
+    const signed char*  __restrict__ scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    float*              __restrict__ out,
+    int N,
+    int K)
+{
+    int nb = (int)__builtin_amdgcn_workgroup_id_x();
+    if (nb >= (N >> 5)) return;
+    fp8_m1_mw_lut_nb<WAVES>(packed_codes, scales, a, s, out, nb, K);
+}
+
+template<int WAVES>
+__device__ static __inline__ void fp8_pair_m1_mw_lut_impl(
+    const unsigned int* __restrict__ codes0,
+    const signed char*  __restrict__ scales0,
+    float*              __restrict__ out0,
+    int N0,
+    const unsigned int* __restrict__ codes1,
+    const signed char*  __restrict__ scales1,
+    float*              __restrict__ out1,
+    int N1,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    int K)
+{
+    int wg = (int)__builtin_amdgcn_workgroup_id_x();
+    int nnb0 = N0 >> 5;
+    int nnb1 = N1 >> 5;
+    if (wg < nnb0) {
+        fp8_m1_mw_lut_nb<WAVES>(codes0, scales0, a, s, out0, wg, K);
+    } else {
+        int nb = wg - nnb0;
+        if (nb < nnb1) {
+            fp8_m1_mw_lut_nb<WAVES>(codes1, scales1, a, s, out1, nb, K);
+        }
+    }
+}
+
 extern "C" __global__ void hv41_fp8_linear_m1_w8(
     const unsigned int* __restrict__ packed_codes,
     const signed char*  __restrict__ scales,
@@ -393,6 +447,40 @@ extern "C" __global__ void hv41_fp8_linear_m1_w16(
     fp8_m1_mw_lut_impl<16>(packed_codes, scales, a, s, out, N, K);
 }
 
+extern "C" __global__ void hv41_fp8_pair_m1_w8(
+    const unsigned int* __restrict__ codes0,
+    const signed char*  __restrict__ scales0,
+    float*              __restrict__ out0,
+    int N0,
+    const unsigned int* __restrict__ codes1,
+    const signed char*  __restrict__ scales1,
+    float*              __restrict__ out1,
+    int N1,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    int K)
+{
+    fp8_pair_m1_mw_lut_impl<8>(codes0, scales0, out0, N0, codes1, scales1, out1, N1, a, s, K);
+}
+
+extern "C" __global__ void hv41_fp8_pair_m1_w16(
+    const unsigned int* __restrict__ codes0,
+    const signed char*  __restrict__ scales0,
+    float*              __restrict__ out0,
+    int N0,
+    const unsigned int* __restrict__ codes1,
+    const signed char*  __restrict__ scales1,
+    float*              __restrict__ out1,
+    int N1,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    int K)
+{
+    fp8_pair_m1_mw_lut_impl<16>(codes0, scales0, out0, N0, codes1, scales1, out1, N1, a, s, K);
+}
+)HIP";
+
+const char* kHipKernelSource1b = R"HIP(
 // Multi-row kernel: processes up to 4 rows per workgroup.y slice (1 wave32/workgroup) with zero shuffles.
 extern "C" __global__ void hv41_fp8_linear_tile4(
     const unsigned int* __restrict__ packed_codes,
@@ -737,6 +825,37 @@ extern "C" __global__ void hv41_sattn_kernel(
     }
 }
 
+__device__ static __inline__ float compute_e4m3_scale32(const float* smax) {
+    float m = 0.0f;
+    for (int i = 0; i < 32; ++i) {
+        m = __builtin_fmaxf(m, smax[i]);
+    }
+    m = __builtin_fmaxf(m, uint_as_f32(0x38D1B717u)); // 1e-4f
+    float s_raw = m * uint_as_f32(0x3B124925u);       // m / 448.0f
+    unsigned int u = f32_as_uint(s_raw);
+    unsigned int e = ((u >> 23) & 0xFFu) + ((u & 0x7FFFFFu) != 0u ? 1u : 0u);
+    return uint_as_f32(e << 23);
+}
+
+__device__ static __inline__ int quantize_e4m3_val(float v, float scale) {
+    float ratio = v / scale;
+    float clamped = ratio;
+    if (!(ratio != ratio)) { // not NaN
+        clamped = __builtin_fmaxf(-448.0f, __builtin_fminf(448.0f, ratio));
+        if (clamped != 0.0f) {
+            float abs_c = uint_as_f32(f32_as_uint(clamped) & 0x7FFFFFFFu);
+            int exp_unbiased = (int)((f32_as_uint(abs_c) >> 23) & 0xFFu) - 127;
+            int e_q = (exp_unbiased < -6) ? -6 : exp_unbiased;
+            float step = uint_as_f32((unsigned int)(e_q + 124) << 23);
+            float rounded = __builtin_rintf(abs_c / step) * step;
+            float mag = __builtin_fminf(448.0f, rounded);
+            unsigned int sign = f32_as_uint(clamped) & 0x80000000u;
+            clamped = uint_as_f32(sign | f32_as_uint(mag));
+        }
+    }
+    return (int)(clamped * 512.0f);
+}
+
 // 1 workgroup (32 threads) per 32-element block of x[K], matching act_quant32_scalar + (int)(qv * 512.0f).
 extern "C" __global__ void hv41_act_quant32_kernel(
     const float* __restrict__ x,
@@ -756,37 +875,13 @@ extern "C" __global__ void hv41_act_quant32_kernel(
     smax[lane] = av_abs;
     __builtin_amdgcn_s_barrier();
     if (lane == 0) {
-        float m = 0.0f;
-        for (int i = 0; i < 32; ++i) {
-            m = __builtin_fmaxf(m, smax[i]);
-        }
-        m = __builtin_fmaxf(m, uint_as_f32(0x38D1B717u)); // 1e-4f
-        float s_raw = m * uint_as_f32(0x3B124925u);       // m / 448.0f
-        unsigned int u = f32_as_uint(s_raw);
-        unsigned int e = ((u >> 23) & 0xFFu) + ((u & 0x7FFFFFu) != 0u ? 1u : 0u);
-        float sc = uint_as_f32(e << 23);
+        float sc = compute_e4m3_scale32(smax);
         smax[0] = sc;
         sv[g] = sc;
     }
     __builtin_amdgcn_s_barrier();
 
-    float scale = smax[0];
-    float ratio = v / scale;
-    float clamped = ratio;
-    if (!(ratio != ratio)) { // not NaN
-        clamped = __builtin_fmaxf(-448.0f, __builtin_fminf(448.0f, ratio));
-        if (clamped != 0.0f) {
-            float abs_c = uint_as_f32(f32_as_uint(clamped) & 0x7FFFFFFFu);
-            int exp_unbiased = (int)((f32_as_uint(abs_c) >> 23) & 0xFFu) - 127;
-            int e_q = (exp_unbiased < -6) ? -6 : exp_unbiased;
-            float step = uint_as_f32((unsigned int)(e_q + 124) << 23);
-            float rounded = __builtin_rintf(abs_c / step) * step;
-            float mag = __builtin_fminf(448.0f, rounded);
-            unsigned int sign = f32_as_uint(clamped) & 0x80000000u;
-            clamped = uint_as_f32(sign | f32_as_uint(mag));
-        }
-    }
-    av[idx] = (int)(clamped * 512.0f);
+    av[idx] = quantize_e4m3_val(v, smax[0]);
 }
 
 extern "C" __global__ void hv41_shx_silu_kernel(
@@ -1038,6 +1133,265 @@ extern "C" __global__ void hv41_fp4_linear_kernel(
 }
 )HIP";
 
+const char* kHipKernelSource4 = R"HIP(
+template<int WAVES>
+__device__ static __inline__ void shx_gate_up_silu_quant_m1_impl(
+    const unsigned int* __restrict__ gate_codes,
+    const signed char*  __restrict__ gate_scales,
+    const unsigned int* __restrict__ up_codes,
+    const signed char*  __restrict__ up_scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    int*                __restrict__ av_out,
+    float*              __restrict__ sv_out,
+    int N_mid,
+    int K_in)
+{
+    int nb   = (int)__builtin_amdgcn_workgroup_id_x();
+    int tid  = (int)__builtin_amdgcn_workitem_id_x();
+    int lane = tid & 31;
+    int wy   = tid >> 5;
+    if (nb >= (N_mid >> 5)) return;
+
+    __attribute__((shared)) static float s_g[32][32];
+    __attribute__((shared)) static float s_u[32][32];
+    __attribute__((shared)) static float s_max[32];
+    __attribute__((shared)) static int   s_lut[256];
+
+    for (int i = tid; i < 256; i += (WAVES * 32)) {
+        s_lut[i] = decode_e4m3_x512((unsigned int)i);
+    }
+    __builtin_amdgcn_s_barrier();
+
+    int nkb = K_in >> 5;
+    unsigned long long tile_off = (unsigned long long)nb * (unsigned long long)nkb;
+    const unsigned int* g_tile = gate_codes + (tile_off << 8);
+    const signed char*  g_sc   = gate_scales + tile_off;
+    const unsigned int* u_tile = up_codes + (tile_off << 8);
+    const signed char*  u_sc   = up_scales + tile_off;
+    const i4_t*         a_vec  = (const i4_t*)a;
+
+    float acc_g = 0.0f;
+    float acc_u = 0.0f;
+    for (int kb0 = 0; kb0 < nkb; kb0 += 32) {
+        int rem = nkb - kb0;
+        int cnt = (rem < 32) ? rem : 32;
+        for (int t = wy; t < cnt; t += WAVES) {
+            int kb = kb0 + t;
+            const unsigned int* gb = g_tile + ((unsigned long long)kb << 8);
+            const unsigned int* ub = u_tile + ((unsigned long long)kb << 8);
+            const i4_t*         ak = a_vec + (kb << 3);
+            long long dot_g = 0ll;
+            long long dot_u = 0ll;
+
+            #pragma unroll 8
+            for (int grp = 0; grp < 8; ++grp) {
+                i4_t av = ak[grp];
+                unsigned int wg4 = gb[(grp << 5) + lane];
+                dot_g += (long long)s_lut[wg4 & 0xFFu]         * (long long)av.x
+                       + (long long)s_lut[(wg4 >> 8) & 0xFFu]  * (long long)av.y
+                       + (long long)s_lut[(wg4 >> 16) & 0xFFu] * (long long)av.z
+                       + (long long)s_lut[(wg4 >> 24) & 0xFFu] * (long long)av.w;
+                unsigned int wu4 = ub[(grp << 5) + lane];
+                dot_u += (long long)s_lut[wu4 & 0xFFu]         * (long long)av.x
+                       + (long long)s_lut[(wu4 >> 8) & 0xFFu]  * (long long)av.y
+                       + (long long)s_lut[(wu4 >> 16) & 0xFFu] * (long long)av.z
+                       + (long long)s_lut[(wu4 >> 24) & 0xFFu] * (long long)av.w;
+            }
+
+            float sv = s[kb];
+            s_g[t][lane] = dot_to_scaled_f32(dot_g, (int)g_sc[kb]) * sv;
+            s_u[t][lane] = dot_to_scaled_f32(dot_u, (int)u_sc[kb]) * sv;
+        }
+        __builtin_amdgcn_s_barrier();
+        if (wy == 0) {
+            for (int t = 0; t < cnt; ++t) {
+                acc_g = s_g[t][lane] + acc_g;
+                acc_u = s_u[t][lane] + acc_u;
+            }
+        }
+        __builtin_amdgcn_s_barrier();
+    }
+
+    if (wy == 0) {
+        float gv = __builtin_fminf(10.0f, round_bf16_in_f32(acc_g));
+        float uv = round_bf16_in_f32(acc_u);
+        uv = (uv < -10.0f) ? -10.0f : __builtin_fminf(10.0f, uv);
+        float silu = gv / (1.0f + __builtin_expf(-gv));
+        float v = round_bf16_in_f32(silu * uv);
+        s_g[0][lane] = v;
+        s_max[lane] = uint_as_f32(f32_as_uint(v) & 0x7FFFFFFFu);
+    }
+    __builtin_amdgcn_s_barrier();
+
+    if (tid == 0) {
+        float sc = compute_e4m3_scale32(s_max);
+        s_max[0] = sc;
+        sv_out[nb] = sc;
+    }
+    __builtin_amdgcn_s_barrier();
+
+    if (wy == 0) {
+        av_out[(nb << 5) + lane] = quantize_e4m3_val(s_g[0][lane], s_max[0]);
+    }
+}
+
+extern "C" __global__ void hv41_shx_gate_up_silu_quant_m1_w8(
+    const unsigned int* __restrict__ gate_codes,
+    const signed char*  __restrict__ gate_scales,
+    const unsigned int* __restrict__ up_codes,
+    const signed char*  __restrict__ up_scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    int*                __restrict__ av_out,
+    float*              __restrict__ sv_out,
+    int N_mid,
+    int K_in)
+{
+    shx_gate_up_silu_quant_m1_impl<8>(gate_codes, gate_scales, up_codes, up_scales, a, s, av_out, sv_out, N_mid, K_in);
+}
+
+extern "C" __global__ void hv41_shx_gate_up_silu_quant_m1_w16(
+    const unsigned int* __restrict__ gate_codes,
+    const signed char*  __restrict__ gate_scales,
+    const unsigned int* __restrict__ up_codes,
+    const signed char*  __restrict__ up_scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    int*                __restrict__ av_out,
+    float*              __restrict__ sv_out,
+    int N_mid,
+    int K_in)
+{
+    shx_gate_up_silu_quant_m1_impl<16>(gate_codes, gate_scales, up_codes, up_scales, a, s, av_out, sv_out, N_mid, K_in);
+}
+
+extern "C" __global__ void hv41_bf16_w32_quant32_kernel(
+    const unsigned short* __restrict__ W,
+    const float*          __restrict__ x,
+    int*                  __restrict__ av_out,
+    float*                __restrict__ sv_out,
+    int N,
+    int K,
+    int ng)
+{
+    int nb   = (int)__builtin_amdgcn_workgroup_id_x();
+    int tid  = (int)__builtin_amdgcn_workitem_id_x(); // 256 threads (8 wave32s)
+    int lane = tid & 31;
+    int wy   = tid >> 5;
+    if (nb >= (N >> 5)) return;
+
+    __attribute__((shared)) static float s_red[8][32];
+    __attribute__((shared)) static float s_mid[32];
+    __attribute__((shared)) static float s_max[32];
+
+    int nblocks = K >> 3;
+    for (int p = 0; p < 4; ++p) {
+        int r_local = wy + (p << 3);
+        int n = (nb << 5) + r_local;
+        int g = n / ng;
+        const float* x_ptr = x + (unsigned long long)g * (unsigned long long)K;
+        const unsigned short* w_ptr = W + (unsigned long long)n * (unsigned long long)K;
+
+        float acc = 0.0f;
+        for (int b = lane; b < nblocks; b += 32) {
+            int base = b << 3;
+            #pragma unroll
+            for (int t = 0; t < 8; ++t) {
+                acc = __builtin_fmaf(x_ptr[base + t], bf16_to_f32(w_ptr[base + t]), acc);
+            }
+        }
+        s_red[wy][lane] = acc;
+        __builtin_amdgcn_s_barrier();
+
+        for (int stride = 16; stride >= 1; stride >>= 1) {
+            if (lane < stride) {
+                s_red[wy][lane] = s_red[wy][lane + stride] + s_red[wy][lane];
+            }
+            __builtin_amdgcn_s_barrier();
+        }
+        if (lane == 0) {
+            s_mid[r_local] = round_bf16_in_f32(s_red[wy][0]);
+        }
+    }
+    __builtin_amdgcn_s_barrier();
+
+    if (wy == 0) {
+        float v = s_mid[lane];
+        s_max[lane] = uint_as_f32(f32_as_uint(v) & 0x7FFFFFFFu);
+    }
+    __builtin_amdgcn_s_barrier();
+
+    if (tid == 0) {
+        float sc = compute_e4m3_scale32(s_max);
+        s_max[0] = sc;
+        sv_out[nb] = sc;
+    }
+    __builtin_amdgcn_s_barrier();
+
+    if (wy == 0) {
+        av_out[(nb << 5) + lane] = quantize_e4m3_val(s_mid[lane], s_max[0]);
+    }
+}
+
+extern "C" __global__ void hv41_e1_rmsnorm_quant32_kernel(
+    const float* __restrict__ x,
+    const float* __restrict__ w,
+    float*       __restrict__ out,
+    int*         __restrict__ av,
+    float*       __restrict__ sv,
+    int K,
+    float eps)
+{
+    int tid = (int)__builtin_amdgcn_workitem_id_x(); // 64 threads
+    __attribute__((shared)) static float s_sum[64];
+    __attribute__((shared)) static float s_inv;
+    __attribute__((shared)) static float s_max2[2][32];
+
+    float local_sq = 0.0f;
+    for (int i = tid; i < K; i += 64) {
+        float xv = x[i];
+        local_sq += xv * xv;
+    }
+    s_sum[tid] = local_sq;
+    __builtin_amdgcn_s_barrier();
+
+    if (tid == 0) {
+        float tot = 0.0f;
+        for (int i = 0; i < 64; ++i) tot += s_sum[i];
+        float rms = __builtin_sqrtf(tot / (float)K + eps);
+        s_inv = 1.0f / rms;
+    }
+    __builtin_amdgcn_s_barrier();
+
+    float inv = s_inv;
+    int w_id = tid >> 5;
+    int lane = tid & 31;
+    int nkb = K >> 5;
+    for (int g0 = 0; g0 < nkb; g0 += 2) {
+        int g = g0 + w_id;
+        int idx = (g << 5) + lane;
+        int act = (g < nkb) ? 1 : 0;
+        float v = 0.0f;
+        if (act) {
+            v = round_bf16_in_f32(inv * x[idx] * w[idx]);
+            out[idx] = v;
+            s_max2[w_id][lane] = uint_as_f32(f32_as_uint(v) & 0x7FFFFFFFu);
+        }
+        __builtin_amdgcn_s_barrier();
+        if (act && lane == 0) {
+            float sc = compute_e4m3_scale32(s_max2[w_id]);
+            s_max2[w_id][0] = sc;
+            sv[g] = sc;
+        }
+        __builtin_amdgcn_s_barrier();
+        if (act) {
+            av[idx] = quantize_e4m3_val(v, s_max2[w_id][0]);
+        }
+    }
+}
+)HIP";
+
 struct WeightHandle {
     int N = 0;
     int K = 0;
@@ -1051,9 +1405,42 @@ struct Bf16WeightHandle {
     void* d_W = nullptr;
 };
 
+struct MappedBuf {
+    void* h = nullptr;
+    void* d = nullptr;
+    size_t cap = 0;
+};
+
+struct alignas(64) LaneSlot {
+    std::atomic<bool> in_use{ false };
+    void* stream = nullptr;
+    void* ev_start = nullptr;
+    void* ev_stop = nullptr;
+
+    MappedBuf m_in0;
+    MappedBuf m_in1;
+    MappedBuf m_out0;
+    MappedBuf m_out1;
+    MappedBuf m_out2;
+    MappedBuf m_out3;
+
+    void* d_in0 = nullptr;     size_t d_in0_bytes = 0;
+    void* d_in1 = nullptr;     size_t d_in1_bytes = 0;
+    void* d_out0 = nullptr;    size_t d_out0_bytes = 0;
+    void* d_out1 = nullptr;    size_t d_out1_bytes = 0;
+    void* d_out2 = nullptr;    size_t d_out2_bytes = 0;
+    void* d_out3 = nullptr;    size_t d_out3_bytes = 0;
+
+    void* d_sq_tmp0 = nullptr; size_t d_sq_tmp0_bytes = 0;
+    void* d_sq_tmp1 = nullptr; size_t d_sq_tmp1_bytes = 0;
+    void* d_sq_tmp2 = nullptr; size_t d_sq_tmp2_bytes = 0;
+    void* d_sq_av = nullptr;   size_t d_sq_av_bytes = 0;
+    void* d_sq_sv = nullptr;   size_t d_sq_sv_bytes = 0;
+};
+
 struct State {
     std::mutex mu;
-    bool initialized = false;
+    std::atomic<bool> initialized{ false };
     std::string init_info;
     char last_error[1024] = {};
 
@@ -1063,6 +1450,8 @@ struct State {
     void* fn_m1 = nullptr;
     void* fn_m1_w8 = nullptr;
     void* fn_m1_w16 = nullptr;
+    void* fn_fp8_pair_w8 = nullptr;
+    void* fn_fp8_pair_w16 = nullptr;
     void* fn_tile4 = nullptr;
     void* fn_bf16_seq = nullptr;
     void* fn_bf16_w32 = nullptr;
@@ -1070,23 +1459,15 @@ struct State {
     void* fn_act_quant32 = nullptr;
     void* fn_shx_silu = nullptr;
     void* fn_e1_rmsnorm = nullptr;
+    void* fn_shx_gu_w8 = nullptr;
+    void* fn_shx_gu_w16 = nullptr;
+    void* fn_bf16_w32_quant32 = nullptr;
+    void* fn_e1_rmsnorm_quant32 = nullptr;
     void* fn_plane_restore = nullptr;
     void* fn_fp4_linear = nullptr;
     void* stream = nullptr;
     void* ev_start = nullptr;
     void* ev_stop = nullptr;
-
-    void* d_a = nullptr;
-    size_t d_a_bytes = 0;
-    void* d_s = nullptr;
-    size_t d_s_bytes = 0;
-    void* d_out = nullptr;
-    size_t d_out_bytes = 0;
-
-    void* d_bf16_x = nullptr;
-    size_t d_bf16_x_bytes = 0;
-    void* d_bf16_y = nullptr;
-    size_t d_bf16_y_bytes = 0;
 
     void* d_exptable = nullptr;
     int exptable_count = 0;
@@ -1098,21 +1479,9 @@ struct State {
     void* d_sa_sink = nullptr; size_t d_sa_sink_bytes = 0;
     void* d_sa_o = nullptr; size_t d_sa_o_bytes = 0;
 
-    void* d_sq_tmp0 = nullptr; size_t d_sq_tmp0_bytes = 0;
-    void* d_sq_tmp1 = nullptr; size_t d_sq_tmp1_bytes = 0;
-    void* d_sq_tmp2 = nullptr; size_t d_sq_tmp2_bytes = 0;
-    void* d_sq_av = nullptr;   size_t d_sq_av_bytes = 0;
-    void* d_sq_sv = nullptr;   size_t d_sq_sv_bytes = 0;
-    void* d_sq_out0 = nullptr; size_t d_sq_out0_bytes = 0;
-    void* d_sq_out1 = nullptr; size_t d_sq_out1_bytes = 0;
-
     static constexpr size_t kMaxPinnedStage = 2ull * 1024ull * 1024ull;
-    void* h_in0 = nullptr;  size_t h_in0_bytes = 0;
-    void* h_in1 = nullptr;  size_t h_in1_bytes = 0;
-    void* h_out0 = nullptr; size_t h_out0_bytes = 0;
-    void* h_out1 = nullptr; size_t h_out1_bytes = 0;
-    void* h_out2 = nullptr; size_t h_out2_bytes = 0;
-    void* h_out3 = nullptr; size_t h_out3_bytes = 0;
+    static constexpr int kNumSlots = 8;
+    LaneSlot slots[kNumSlots];
 
     std::atomic<size_t> resident_bytes{ 0 };
 };
@@ -1174,7 +1543,8 @@ static bool compile_hsaco_gfx1031(ComgrApi& c, const char* isa_name, std::vector
     rc = c.create_data(AMD_COMGR_DATA_KIND_SOURCE, &src_data);
     if (rc != AMD_COMGR_STATUS_SUCCESS) { err_ctx = "create_data"; goto cleanup; }
     {
-        std::string full_hip_src = std::string(kHipKernelSource) + kHipKernelSource2 + kHipKernelSource3;
+        std::string full_hip_src =
+            std::string(kHipKernelSource) + kHipKernelSource1b + kHipKernelSource2 + kHipKernelSource3 + kHipKernelSource4;
         rc = c.set_data(src_data, full_hip_src.size(), full_hip_src.c_str());
     }
     if (rc != AMD_COMGR_STATUS_SUCCESS) { err_ctx = "set_data"; goto cleanup; }
@@ -1267,46 +1637,114 @@ cleanup_err_already_set:
     return ok;
 }
 
-static bool ensure_scratch(State& st, size_t need_a, size_t need_s, size_t need_out) {
-    auto alloc_grow = [&](void** ptr, size_t* cap, size_t need, const char* label) -> bool {
-        if (*cap >= need) return true;
-        if (*ptr) {
-            st.hip.free(*ptr);
-            *ptr = nullptr;
-            *cap = 0;
+static int acquire_slot(State& st) {
+    for (int attempt = 0;; ++attempt) {
+        for (int i = 0; i < State::kNumSlots; ++i) {
+            bool expected = false;
+            if (st.slots[i].in_use.compare_exchange_weak(
+                    expected, true, std::memory_order_acquire, std::memory_order_relaxed)) {
+                return i;
+            }
         }
-        void* p = nullptr;
-        int rc = st.hip.malloc(&p, need);
-        if (rc != HIP_SUCCESS || !p) {
-            set_error("hipMalloc scratch %s (%zu bytes) failed (%d: %s)",
-                label, need, rc, st.hip.getErrorString(rc));
-            return false;
+        if (attempt < 64) {
+            _mm_pause();
+        } else {
+            SwitchToThread();
         }
-        *ptr = p;
-        *cap = need;
-        return true;
-    };
-    return alloc_grow(&st.d_a, &st.d_a_bytes, need_a, "d_a") &&
-           alloc_grow(&st.d_s, &st.d_s_bytes, need_s, "d_s") &&
-           alloc_grow(&st.d_out, &st.d_out_bytes, need_out, "d_out");
+    }
 }
 
-static bool ensure_pinned_buf(State& st, void*& ptr, size_t& cap, size_t need_bytes) {
-    if (need_bytes == 0 || need_bytes > State::kMaxPinnedStage) return false;
+struct SlotGuard {
+    State& st;
+    int idx;
+    explicit SlotGuard(State& s) : st(s), idx(acquire_slot(s)) {}
+    ~SlotGuard() {
+        st.slots[idx].in_use.store(false, std::memory_order_release);
+    }
+    LaneSlot& slot() { return st.slots[idx]; }
+    SlotGuard(const SlotGuard&) = delete;
+    SlotGuard& operator=(const SlotGuard&) = delete;
+};
+
+static bool ensure_dev_buf(State& st, void*& ptr, size_t& cap, size_t need_bytes) {
+    if (need_bytes == 0) return true;
     if (cap >= need_bytes && ptr != nullptr) return true;
     if (ptr) {
-        st.hip.hostFree(ptr);
+        st.hip.free(ptr);
         ptr = nullptr;
         cap = 0;
     }
-    int rc = st.hip.hostMalloc(&ptr, need_bytes, 0u);
+    int rc = st.hip.malloc(&ptr, need_bytes);
     if (rc != HIP_SUCCESS || !ptr) {
+        set_error("hipMalloc(%zu) failed (%d: %s)", need_bytes, rc, st.hip.getErrorString(rc));
         ptr = nullptr;
         cap = 0;
         return false;
     }
     cap = need_bytes;
     return true;
+}
+
+static bool ensure_mapped_buf(State& st, MappedBuf& buf, size_t need_bytes) {
+    if (need_bytes == 0 || need_bytes > State::kMaxPinnedStage) return false;
+    if (buf.cap >= need_bytes && buf.h && buf.d) return true;
+    if (buf.h) {
+        st.hip.hostFree(buf.h);
+        buf.h = nullptr;
+        buf.d = nullptr;
+        buf.cap = 0;
+    }
+    void* hp = nullptr;
+    int rc = st.hip.hostMalloc(&hp, need_bytes, HIP_HOST_MALLOC_PORTABLE_MAPPED);
+    if (rc != HIP_SUCCESS || !hp) {
+        return false;
+    }
+    void* dp = nullptr;
+    rc = st.hip.hostGetDevicePointer(&dp, hp, 0u);
+    if (rc != HIP_SUCCESS || !dp) {
+        st.hip.hostFree(hp);
+        return false;
+    }
+    buf.h = hp;
+    buf.d = dp;
+    buf.cap = need_bytes;
+    return true;
+}
+
+static bool bind_input_buf(
+    State& st, LaneSlot& slot, MappedBuf& mbuf, void*& d_fb, size_t& d_fb_bytes,
+    const void* src, size_t bytes, void** out_dptr)
+{
+    if (ensure_mapped_buf(st, mbuf, bytes)) {
+        memcpy(mbuf.h, src, bytes);
+        *out_dptr = mbuf.d;
+        return true;
+    }
+    if (!ensure_dev_buf(st, d_fb, d_fb_bytes, bytes)) return false;
+    if (st.hip.memcpyAsync(d_fb, src, bytes, HIP_MEMCPY_HOST_TO_DEVICE, slot.stream) != HIP_SUCCESS) {
+        return false;
+    }
+    *out_dptr = d_fb;
+    return true;
+}
+
+static bool bind_output_buf(
+    State& st, MappedBuf& mbuf, void*& d_fb, size_t& d_fb_bytes,
+    size_t bytes, void** out_dptr, bool* used_mapped)
+{
+    if (ensure_mapped_buf(st, mbuf, bytes)) {
+        *out_dptr = mbuf.d;
+        *used_mapped = true;
+        return true;
+    }
+    if (!ensure_dev_buf(st, d_fb, d_fb_bytes, bytes)) return false;
+    *out_dptr = d_fb;
+    *used_mapped = false;
+    return true;
+}
+
+static int wait_stream_fast(State& st, LaneSlot& slot, bool /*spin_wait*/) {
+    return st.hip.streamSynchronize(slot.stream);
 }
 
 } // namespace
@@ -1325,7 +1763,7 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
     State& st = state();
     std::lock_guard<std::mutex> lock(st.mu);
 
-    if (st.initialized) {
+    if (st.initialized.load(std::memory_order_acquire)) {
         if (info_buf && info_buf_size > 0) {
             snprintf(info_buf, (size_t)info_buf_size, "%s", st.init_info.c_str());
         }
@@ -1346,6 +1784,7 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
         set_error("hipInit failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -1;
     }
+    (void)st.hip.setDeviceFlags(HIP_DEVICE_SCHEDULE_BLOCKING_SYNC);
     rc = st.hip.setDevice(0);
     if (rc != HIP_SUCCESS) {
         set_error("hipSetDevice(0) failed (%d: %s)", rc, st.hip.getErrorString(rc));
@@ -1442,6 +1881,36 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
         set_error("hipModuleGetFunction(hv41_fp4_linear_kernel) failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -1;
     }
+    rc = st.hip.moduleGetFunction(&st.fn_fp8_pair_w8, st.hip_module, "hv41_fp8_pair_m1_w8");
+    if (rc != HIP_SUCCESS || !st.fn_fp8_pair_w8) {
+        set_error("hipModuleGetFunction(hv41_fp8_pair_m1_w8) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
+    rc = st.hip.moduleGetFunction(&st.fn_fp8_pair_w16, st.hip_module, "hv41_fp8_pair_m1_w16");
+    if (rc != HIP_SUCCESS || !st.fn_fp8_pair_w16) {
+        set_error("hipModuleGetFunction(hv41_fp8_pair_m1_w16) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
+    rc = st.hip.moduleGetFunction(&st.fn_shx_gu_w8, st.hip_module, "hv41_shx_gate_up_silu_quant_m1_w8");
+    if (rc != HIP_SUCCESS || !st.fn_shx_gu_w8) {
+        set_error("hipModuleGetFunction(hv41_shx_gate_up_silu_quant_m1_w8) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
+    rc = st.hip.moduleGetFunction(&st.fn_shx_gu_w16, st.hip_module, "hv41_shx_gate_up_silu_quant_m1_w16");
+    if (rc != HIP_SUCCESS || !st.fn_shx_gu_w16) {
+        set_error("hipModuleGetFunction(hv41_shx_gate_up_silu_quant_m1_w16) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
+    rc = st.hip.moduleGetFunction(&st.fn_bf16_w32_quant32, st.hip_module, "hv41_bf16_w32_quant32_kernel");
+    if (rc != HIP_SUCCESS || !st.fn_bf16_w32_quant32) {
+        set_error("hipModuleGetFunction(hv41_bf16_w32_quant32_kernel) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
+    rc = st.hip.moduleGetFunction(&st.fn_e1_rmsnorm_quant32, st.hip_module, "hv41_e1_rmsnorm_quant32_kernel");
+    if (rc != HIP_SUCCESS || !st.fn_e1_rmsnorm_quant32) {
+        set_error("hipModuleGetFunction(hv41_e1_rmsnorm_quant32_kernel) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
 
     rc = st.hip.streamCreate(&st.stream);
     if (rc != HIP_SUCCESS) {
@@ -1454,16 +1923,26 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
         return -1;
     }
 
-    // Pre-allocate scratch for common non-expert shapes (rows=8, K=8192, N=32768)
-    ensure_scratch(st, 64ull * 8192ull * sizeof(int32_t),
-                       64ull * 256ull * sizeof(float),
-                       64ull * 32768ull * sizeof(float));
-    ensure_pinned_buf(st, st.h_in0,  st.h_in0_bytes,  256ull * 1024ull);
-    ensure_pinned_buf(st, st.h_in1,  st.h_in1_bytes,   64ull * 1024ull);
-    ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, 256ull * 1024ull);
-    ensure_pinned_buf(st, st.h_out1, st.h_out1_bytes,  64ull * 1024ull);
-    ensure_pinned_buf(st, st.h_out2, st.h_out2_bytes,  64ull * 1024ull);
-    ensure_pinned_buf(st, st.h_out3, st.h_out3_bytes, 128ull * 1024ull);
+    for (int i = 0; i < State::kNumSlots; ++i) {
+        LaneSlot& slot = st.slots[i];
+        slot.in_use.store(false, std::memory_order_relaxed);
+        rc = st.hip.streamCreateWithFlags(&slot.stream, HIP_STREAM_NON_BLOCKING);
+        if (rc != HIP_SUCCESS || !slot.stream) {
+            set_error("hipStreamCreateWithFlags(slot %d) failed (%d: %s)", i, rc, st.hip.getErrorString(rc));
+            return -1;
+        }
+        if (st.hip.eventCreate(&slot.ev_start) != HIP_SUCCESS ||
+            st.hip.eventCreate(&slot.ev_stop) != HIP_SUCCESS) {
+            set_error("hipEventCreate(slot %d) failed", i);
+            return -1;
+        }
+        ensure_mapped_buf(st, slot.m_in0,  64ull * 1024ull);
+        ensure_mapped_buf(st, slot.m_in1,   4ull * 1024ull);
+        ensure_mapped_buf(st, slot.m_out0, 64ull * 1024ull);
+        ensure_mapped_buf(st, slot.m_out1, 16ull * 1024ull);
+        ensure_mapped_buf(st, slot.m_out2, 64ull * 1024ull);
+        ensure_mapped_buf(st, slot.m_out3, 32ull * 1024ull);
+    }
 
     size_t vfree = 0, vtotal = 0;
     st.hip.memGetInfo(&vfree, &vtotal);
@@ -1475,7 +1954,7 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
         vfree >> 20, vtotal >> 20);
     st.init_info = info;
     st.last_error[0] = '\0';
-    st.initialized = true;
+    st.initialized.store(true, std::memory_order_release);
 
     if (const char* exptab = getenv("HV41C_EXPTABLE")) {
         if (exptab[0]) {
@@ -1571,7 +2050,9 @@ extern "C" __declspec(dllexport) void* hv41c_upload(
     return h;
 }
 
-static int launch_fp8_m1_dev(State& st, const WeightHandle* w, void* d_av, void* d_sv, void* d_out) {
+static int launch_fp8_m1_on_stream(
+    State& st, void* stream, const WeightHandle* w, void* d_av, void* d_sv, void* d_out)
+{
     void* p_codes = w->d_codes;
     void* p_scales = w->d_scales;
     void* p_a = d_av;
@@ -1593,7 +2074,7 @@ static int launch_fp8_m1_dev(State& st, const WeightHandle* w, void* d_av, void*
         }
     }
     return st.hip.moduleLaunchKernel(
-        fn, (unsigned int)(w->N >> 5), 1u, 1u, block_x, 1u, 1u, 0u, st.stream, args, nullptr);
+        fn, (unsigned int)(w->N >> 5), 1u, 1u, block_x, 1u, 1u, 0u, stream, args, nullptr);
 }
 
 extern "C" __declspec(dllexport) int hv41c_linear(
@@ -1605,9 +2086,7 @@ extern "C" __declspec(dllexport) int hv41c_linear(
     float* out_ms)
 {
     State& st = state();
-    std::lock_guard<std::mutex> lock(st.mu);
-
-    if (!st.initialized) {
+    if (!st.initialized.load(std::memory_order_acquire)) {
         set_error("hv41c_linear called before hv41c_init");
         return -1;
     }
@@ -1624,48 +2103,34 @@ extern "C" __declspec(dllexport) int hv41c_linear(
     size_t s_bytes = (size_t)rows * (size_t)nkb * sizeof(float);
     size_t out_bytes = (size_t)rows * (size_t)N * sizeof(float);
 
-    if (!ensure_scratch(st, a_bytes, s_bytes, out_bytes)) {
+    SlotGuard guard(st);
+    LaneSlot& slot = guard.slot();
+
+    void* d_a_ptr = nullptr;
+    void* d_s_ptr = nullptr;
+    void* d_out_ptr = nullptr;
+    bool out_mapped = false;
+    if (!bind_input_buf(st, slot, slot.m_in0, slot.d_in0, slot.d_in0_bytes, a, a_bytes, &d_a_ptr) ||
+        !bind_input_buf(st, slot, slot.m_in1, slot.d_in1, slot.d_in1_bytes, s, s_bytes, &d_s_ptr) ||
+        !bind_output_buf(st, slot.m_out0, slot.d_out0, slot.d_out0_bytes, out_bytes, &d_out_ptr, &out_mapped)) {
         return -3;
     }
 
-    const void* src_a = a;
-    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, a_bytes)) {
-        memcpy(st.h_in0, a, a_bytes);
-        src_a = st.h_in0;
-    }
-    const void* src_s = s;
-    if (ensure_pinned_buf(st, st.h_in1, st.h_in1_bytes, s_bytes)) {
-        memcpy(st.h_in1, s, s_bytes);
-        src_s = st.h_in1;
-    }
-    bool out_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, out_bytes);
-    void* dst_out = out_pinned ? st.h_out0 : static_cast<void*>(out);
-
-    int rc = st.hip.memcpyAsync(st.d_a, src_a, a_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
-    if (rc != HIP_SUCCESS) {
-        set_error("hipMemcpyAsync a H2D failed (%d: %s)", rc, st.hip.getErrorString(rc));
-        return -4;
-    }
-    rc = st.hip.memcpyAsync(st.d_s, src_s, s_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
-    if (rc != HIP_SUCCESS) {
-        set_error("hipMemcpyAsync s H2D failed (%d: %s)", rc, st.hip.getErrorString(rc));
-        return -4;
-    }
-
     if (out_ms) {
-        st.hip.eventRecord(st.ev_start, st.stream);
+        st.hip.eventRecord(slot.ev_start, slot.stream);
     }
 
+    int rc = HIP_SUCCESS;
     unsigned int grid_x = (unsigned int)(N >> 5);
     if (rows == 1) {
-        rc = launch_fp8_m1_dev(st, w, st.d_a, st.d_s, st.d_out);
+        rc = launch_fp8_m1_on_stream(st, slot.stream, w, d_a_ptr, d_s_ptr, d_out_ptr);
     } else {
         unsigned int grid_y = (unsigned int)((rows + 3) / 4);
         void* p_codes  = w->d_codes;
         void* p_scales = w->d_scales;
-        void* p_a      = st.d_a;
-        void* p_s      = st.d_s;
-        void* p_out    = st.d_out;
+        void* p_a      = d_a_ptr;
+        void* p_s      = d_s_ptr;
+        void* p_out    = d_out_ptr;
         int   p_N      = N;
         int   p_K      = K;
         int   p_rows   = rows;
@@ -1674,7 +2139,7 @@ extern "C" __declspec(dllexport) int hv41c_linear(
             st.fn_tile4,
             grid_x, grid_y, 1u,
             32u, 1u, 1u,
-            0u, st.stream, args, nullptr);
+            0u, slot.stream, args, nullptr);
     }
 
     if (rc != HIP_SUCCESS) {
@@ -1683,27 +2148,29 @@ extern "C" __declspec(dllexport) int hv41c_linear(
     }
 
     if (out_ms) {
-        st.hip.eventRecord(st.ev_stop, st.stream);
+        st.hip.eventRecord(slot.ev_stop, slot.stream);
     }
 
-    rc = st.hip.memcpyAsync(dst_out, st.d_out, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream);
-    if (rc != HIP_SUCCESS) {
-        set_error("hipMemcpyAsync out D2H failed (%d: %s)", rc, st.hip.getErrorString(rc));
-        return -4;
+    if (!out_mapped) {
+        rc = st.hip.memcpyAsync(out, d_out_ptr, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, slot.stream);
+        if (rc != HIP_SUCCESS) {
+            set_error("hipMemcpyAsync out D2H failed (%d: %s)", rc, st.hip.getErrorString(rc));
+            return -4;
+        }
     }
 
-    rc = st.hip.streamSynchronize(st.stream);
+    rc = wait_stream_fast(st, slot, rows <= 4);
     if (rc != HIP_SUCCESS) {
-        set_error("hipStreamSynchronize failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        set_error("wait_stream_fast failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
     }
-    if (out_pinned) {
-        memcpy(out, st.h_out0, out_bytes);
+    if (out_mapped) {
+        memcpy(out, slot.m_out0.h, out_bytes);
     }
 
     if (out_ms) {
         float ms = 0.0f;
-        if (st.hip.eventElapsedTime(&ms, st.ev_start, st.ev_stop) == HIP_SUCCESS) {
+        if (st.hip.eventElapsedTime(&ms, slot.ev_start, slot.ev_stop) == HIP_SUCCESS) {
             *out_ms = ms;
         } else {
             *out_ms = 0.0f;
@@ -1718,35 +2185,16 @@ extern "C" __declspec(dllexport) size_t hv41c_resident(void) {
 
 extern "C" __declspec(dllexport) size_t hv41c_vram_free(void) {
     State& st = state();
-    if (!st.initialized || !st.hip.memGetInfo) return 0;
+    if (!st.initialized.load(std::memory_order_acquire) || !st.hip.memGetInfo) return 0;
     size_t vfree = 0, vtotal = 0;
     if (st.hip.memGetInfo(&vfree, &vtotal) != HIP_SUCCESS) return 0;
     return vfree;
 }
 
-static bool ensure_dev_buf(State& st, void*& ptr, size_t& cap, size_t need_bytes) {
-    if (need_bytes == 0) return true;
-    if (cap >= need_bytes && ptr != nullptr) return true;
-    if (ptr) {
-        st.hip.free(ptr);
-        ptr = nullptr;
-        cap = 0;
-    }
-    int rc = st.hip.malloc(&ptr, need_bytes);
-    if (rc != HIP_SUCCESS) {
-        set_error("hipMalloc(%zu) failed (%d: %s)", need_bytes, rc, st.hip.getErrorString(rc));
-        ptr = nullptr;
-        cap = 0;
-        return false;
-    }
-    cap = need_bytes;
-    return true;
-}
-
 extern "C" __declspec(dllexport) void* hv41c_upload_bf16(const uint16_t* W, int N, int K) {
     State& st = state();
     std::lock_guard<std::mutex> lock(st.mu);
-    if (!st.initialized || !W || N < 1 || K < 8 || (K & 7) != 0) {
+    if (!st.initialized.load(std::memory_order_acquire) || !W || N < 1 || K < 8 || (K & 7) != 0) {
         return nullptr;
     }
     size_t bytes = (size_t)N * (size_t)K * sizeof(uint16_t);
@@ -1783,8 +2231,7 @@ static int run_bf16_kernel(
     bool is_seq)
 {
     State& st = state();
-    std::lock_guard<std::mutex> lock(st.mu);
-    if (!st.initialized || !h_void || !x || !y) return -1;
+    if (!st.initialized.load(std::memory_order_acquire) || !h_void || !x || !y) return -1;
     if (M < 1 || M > 0xFFFF || ng < 1) return -2;
 
     const auto* h = static_cast<const Bf16WeightHandle*>(h_void);
@@ -1795,59 +2242,58 @@ static int run_bf16_kernel(
 
     size_t x_bytes = (size_t)M * (size_t)K_x * sizeof(float);
     size_t y_bytes = (size_t)M * (size_t)N * sizeof(float);
-    if (!ensure_dev_buf(st, st.d_bf16_x, st.d_bf16_x_bytes, x_bytes)) return -3;
-    if (!ensure_dev_buf(st, st.d_bf16_y, st.d_bf16_y_bytes, y_bytes)) return -3;
 
-    const void* src_x = x;
-    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, x_bytes)) {
-        memcpy(st.h_in0, x, x_bytes);
-        src_x = st.h_in0;
-    }
-    bool y_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, y_bytes);
-    void* dst_y = y_pinned ? st.h_out0 : static_cast<void*>(y);
+    SlotGuard guard(st);
+    LaneSlot& slot = guard.slot();
 
-    int rc = st.hip.memcpyAsync(st.d_bf16_x, src_x, x_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
-    if (rc != HIP_SUCCESS) {
-        set_error("bf16 H2D failed (%d: %s)", rc, st.hip.getErrorString(rc));
-        return -4;
+    void* d_x_ptr = nullptr;
+    void* d_y_ptr = nullptr;
+    bool y_mapped = false;
+    if (!bind_input_buf(st, slot, slot.m_in0, slot.d_in0, slot.d_in0_bytes, x, x_bytes, &d_x_ptr) ||
+        !bind_output_buf(st, slot.m_out0, slot.d_out0, slot.d_out0_bytes, y_bytes, &d_y_ptr, &y_mapped)) {
+        return -3;
     }
-    if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
+
+    if (ms_out) st.hip.eventRecord(slot.ev_start, slot.stream);
 
     void* p_W = h->d_W;
-    void* p_x = st.d_bf16_x;
-    void* p_y = st.d_bf16_y;
+    void* p_x = d_x_ptr;
+    void* p_y = d_y_ptr;
     int p_M = M, p_N = N, p_K = K, p_ng = ng, p_Kx = K_x, p_rnd = bf16_round ? 1 : 0;
     void* args[] = { &p_W, &p_x, &p_y, &p_M, &p_N, &p_K, &p_ng, &p_Kx, &p_rnd };
 
+    int rc = HIP_SUCCESS;
     if (is_seq) {
         unsigned long long total = (unsigned long long)M * (unsigned long long)N;
         unsigned int gx = (unsigned int)((total + 63ull) / 64ull);
-        rc = st.hip.moduleLaunchKernel(fn, gx, 1u, 1u, 64u, 1u, 1u, 0u, st.stream, args, nullptr);
+        rc = st.hip.moduleLaunchKernel(fn, gx, 1u, 1u, 64u, 1u, 1u, 0u, slot.stream, args, nullptr);
     } else {
-        rc = st.hip.moduleLaunchKernel(fn, (unsigned int)N, (unsigned int)M, 1u, 32u, 1u, 1u, 0u, st.stream, args, nullptr);
+        rc = st.hip.moduleLaunchKernel(fn, (unsigned int)N, (unsigned int)M, 1u, 32u, 1u, 1u, 0u, slot.stream, args, nullptr);
     }
     if (rc != HIP_SUCCESS) {
         set_error("bf16 launch failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
     }
-    if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
+    if (ms_out) st.hip.eventRecord(slot.ev_stop, slot.stream);
 
-    rc = st.hip.memcpyAsync(dst_y, st.d_bf16_y, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream);
-    if (rc != HIP_SUCCESS) {
-        set_error("bf16 D2H failed (%d: %s)", rc, st.hip.getErrorString(rc));
-        return -4;
+    if (!y_mapped) {
+        rc = st.hip.memcpyAsync(y, d_y_ptr, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, slot.stream);
+        if (rc != HIP_SUCCESS) {
+            set_error("bf16 D2H failed (%d: %s)", rc, st.hip.getErrorString(rc));
+            return -4;
+        }
     }
-    rc = st.hip.streamSynchronize(st.stream);
+    rc = wait_stream_fast(st, slot, M <= 4);
     if (rc != HIP_SUCCESS) {
         set_error("bf16 sync failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
     }
-    if (y_pinned) {
-        memcpy(y, st.h_out0, y_bytes);
+    if (y_mapped) {
+        memcpy(y, slot.m_out0.h, y_bytes);
     }
     if (ms_out) {
         float ms = 0.0f;
-        *ms_out = (st.hip.eventElapsedTime(&ms, st.ev_start, st.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
+        *ms_out = (st.hip.eventElapsedTime(&ms, slot.ev_start, slot.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
     }
     return 0;
 }
@@ -2027,14 +2473,14 @@ extern "C" __declspec(dllexport) int hv41c_sattn(
     return 0;
 }
 
-static int launch_act_quant32_dev(State& st, void* d_x, void* d_av, void* d_sv, int K) {
+static int launch_act_quant32_dev(State& st, void* stream, void* d_x, void* d_av, void* d_sv, int K) {
     void* p_x = d_x;
     void* p_av = d_av;
     void* p_sv = d_sv;
     int p_K = K;
     void* args[] = { &p_x, &p_av, &p_sv, &p_K };
     return st.hip.moduleLaunchKernel(
-        st.fn_act_quant32, (unsigned int)(K >> 5), 1u, 1u, 32u, 1u, 1u, 0u, st.stream, args, nullptr);
+        st.fn_act_quant32, (unsigned int)(K >> 5), 1u, 1u, 32u, 1u, 1u, 0u, stream, args, nullptr);
 }
 
 extern "C" __declspec(dllexport) int hv41c_seq_shared(
@@ -2043,8 +2489,7 @@ extern "C" __declspec(dllexport) int hv41c_seq_shared(
     float* y, float* ms_out)
 {
     State& st = state();
-    std::lock_guard<std::mutex> lock(st.mu);
-    if (!st.initialized || !av || !sv || !d_gate_v || !d_up_v || !d_down_v || !y) return -1;
+    if (!st.initialized.load(std::memory_order_acquire) || !av || !sv || !d_gate_v || !d_up_v || !d_down_v || !y) return -1;
 
     const auto* w_gate = static_cast<const WeightHandle*>(d_gate_v);
     const auto* w_up   = static_cast<const WeightHandle*>(d_up_v);
@@ -2061,63 +2506,83 @@ extern "C" __declspec(dllexport) int hv41c_seq_shared(
     size_t sv_m_bytes  = (size_t)(N_mid >> 5) * sizeof(float);
     size_t out_bytes   = (size_t)N_out * sizeof(float);
 
-    if (!ensure_dev_buf(st, st.d_a, st.d_a_bytes, av_in_bytes) ||
-        !ensure_dev_buf(st, st.d_s, st.d_s_bytes, sv_in_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp0, st.d_sq_tmp0_bytes, mid_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp1, st.d_sq_tmp1_bytes, mid_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp2, st.d_sq_tmp2_bytes, mid_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_av, st.d_sq_av_bytes, av_m_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_sv, st.d_sq_sv_bytes, sv_m_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_out0, st.d_sq_out0_bytes, out_bytes)) {
+    int nkb_in = K_in >> 5;
+    bool use_fused = ((N_mid & 31) == 0 && N_mid > 0 && nkb_in >= 8);
+
+    SlotGuard guard(st);
+    LaneSlot& slot = guard.slot();
+
+    if (!ensure_dev_buf(st, slot.d_sq_av, slot.d_sq_av_bytes, av_m_bytes) ||
+        !ensure_dev_buf(st, slot.d_sq_sv, slot.d_sq_sv_bytes, sv_m_bytes)) {
+        return -3;
+    }
+    if (!use_fused) {
+        if (!ensure_dev_buf(st, slot.d_sq_tmp0, slot.d_sq_tmp0_bytes, mid_bytes) ||
+            !ensure_dev_buf(st, slot.d_sq_tmp1, slot.d_sq_tmp1_bytes, mid_bytes) ||
+            !ensure_dev_buf(st, slot.d_sq_tmp2, slot.d_sq_tmp2_bytes, mid_bytes)) {
+            return -3;
+        }
+    }
+
+    void* d_av_ptr = nullptr;
+    void* d_sv_ptr = nullptr;
+    void* d_y_ptr = nullptr;
+    bool y_mapped = false;
+    if (!bind_input_buf(st, slot, slot.m_in0, slot.d_in0, slot.d_in0_bytes, av, av_in_bytes, &d_av_ptr) ||
+        !bind_input_buf(st, slot, slot.m_in1, slot.d_in1, slot.d_in1_bytes, sv, sv_in_bytes, &d_sv_ptr) ||
+        !bind_output_buf(st, slot.m_out0, slot.d_out0, slot.d_out0_bytes, out_bytes, &d_y_ptr, &y_mapped)) {
         return -3;
     }
 
-    const void* src_av = av;
-    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, av_in_bytes)) {
-        memcpy(st.h_in0, av, av_in_bytes);
-        src_av = st.h_in0;
-    }
-    const void* src_sv = sv;
-    if (ensure_pinned_buf(st, st.h_in1, st.h_in1_bytes, sv_in_bytes)) {
-        memcpy(st.h_in1, sv, sv_in_bytes);
-        src_sv = st.h_in1;
-    }
-    bool y_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, out_bytes);
-    void* dst_y = y_pinned ? st.h_out0 : static_cast<void*>(y);
+    if (ms_out) st.hip.eventRecord(slot.ev_start, slot.stream);
 
-    if (st.hip.memcpyAsync(st.d_a, src_av, av_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(st.d_s, src_sv, sv_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
-        return -4;
-    }
-    if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
-
-    if (launch_fp8_m1_dev(st, w_gate, st.d_a, st.d_s, st.d_sq_tmp0) != HIP_SUCCESS ||
-        launch_fp8_m1_dev(st, w_up,   st.d_a, st.d_s, st.d_sq_tmp1) != HIP_SUCCESS) {
-        return -4;
-    }
-    {
-        void* p_g = st.d_sq_tmp0; void* p_u = st.d_sq_tmp1; void* p_o = st.d_sq_tmp2; int p_n = N_mid;
-        void* args[] = { &p_g, &p_u, &p_o, &p_n };
-        if (st.hip.moduleLaunchKernel(st.fn_shx_silu, (unsigned int)((N_mid + 63) / 64), 1u, 1u, 64u, 1u, 1u, 0u, st.stream, args, nullptr) != HIP_SUCCESS) {
+    if (use_fused) {
+        bool use_w16 = (nkb_in >= 16);
+        void* fn_gu = use_w16 ? st.fn_shx_gu_w16 : st.fn_shx_gu_w8;
+        unsigned int bx = use_w16 ? 512u : 256u;
+        void* p_gc = w_gate->d_codes;  void* p_gs = w_gate->d_scales;
+        void* p_uc = w_up->d_codes;    void* p_us = w_up->d_scales;
+        void* p_a  = d_av_ptr;         void* p_s  = d_sv_ptr;
+        void* p_av = slot.d_sq_av;     void* p_sv = slot.d_sq_sv;
+        int   p_Nm = N_mid;            int   p_Ki = K_in;
+        void* args[] = { &p_gc, &p_gs, &p_uc, &p_us, &p_a, &p_s, &p_av, &p_sv, &p_Nm, &p_Ki };
+        if (st.hip.moduleLaunchKernel(fn_gu, (unsigned int)(N_mid >> 5), 1u, 1u, bx, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS ||
+            launch_fp8_m1_on_stream(st, slot.stream, w_down, slot.d_sq_av, slot.d_sq_sv, d_y_ptr) != HIP_SUCCESS) {
+            return -4;
+        }
+    } else {
+        if (launch_fp8_m1_on_stream(st, slot.stream, w_gate, d_av_ptr, d_sv_ptr, slot.d_sq_tmp0) != HIP_SUCCESS ||
+            launch_fp8_m1_on_stream(st, slot.stream, w_up,   d_av_ptr, d_sv_ptr, slot.d_sq_tmp1) != HIP_SUCCESS) {
+            return -4;
+        }
+        {
+            void* p_g = slot.d_sq_tmp0; void* p_u = slot.d_sq_tmp1; void* p_o = slot.d_sq_tmp2; int p_n = N_mid;
+            void* args[] = { &p_g, &p_u, &p_o, &p_n };
+            if (st.hip.moduleLaunchKernel(st.fn_shx_silu, (unsigned int)((N_mid + 63) / 64), 1u, 1u, 64u, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS) {
+                return -4;
+            }
+        }
+        if (launch_act_quant32_dev(st, slot.stream, slot.d_sq_tmp2, slot.d_sq_av, slot.d_sq_sv, N_mid) != HIP_SUCCESS ||
+            launch_fp8_m1_on_stream(st, slot.stream, w_down, slot.d_sq_av, slot.d_sq_sv, d_y_ptr) != HIP_SUCCESS) {
             return -4;
         }
     }
-    if (launch_act_quant32_dev(st, st.d_sq_tmp2, st.d_sq_av, st.d_sq_sv, N_mid) != HIP_SUCCESS ||
-        launch_fp8_m1_dev(st, w_down, st.d_sq_av, st.d_sq_sv, st.d_sq_out0) != HIP_SUCCESS) {
-        return -4;
-    }
-    if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
+    if (ms_out) st.hip.eventRecord(slot.ev_stop, slot.stream);
 
-    if (st.hip.memcpyAsync(dst_y, st.d_sq_out0, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        st.hip.streamSynchronize(st.stream) != HIP_SUCCESS) {
+    if (!y_mapped) {
+        if (st.hip.memcpyAsync(y, d_y_ptr, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, slot.stream) != HIP_SUCCESS) {
+            return -4;
+        }
+    }
+    if (wait_stream_fast(st, slot, true) != HIP_SUCCESS) {
         return -4;
     }
-    if (y_pinned) {
-        memcpy(y, st.h_out0, out_bytes);
+    if (y_mapped) {
+        memcpy(y, slot.m_out0.h, out_bytes);
     }
     if (ms_out) {
         float ms = 0.0f;
-        *ms_out = (st.hip.eventElapsedTime(&ms, st.ev_start, st.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
+        *ms_out = (st.hip.eventElapsedTime(&ms, slot.ev_start, slot.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
     }
     return 0;
 }
@@ -2128,8 +2593,7 @@ extern "C" __declspec(dllexport) int hv41c_seq_back(
     void* d_w_fp8_v, float* y, float* ms_out)
 {
     State& st = state();
-    std::lock_guard<std::mutex> lock(st.mu);
-    if (!st.initialized || !h_bf16_v || !x || !d_w_fp8_v || !y) return -1;
+    if (!st.initialized.load(std::memory_order_acquire) || !h_bf16_v || !x || !d_w_fp8_v || !y) return -1;
     if (M != 1 || ng < 1) return -2;
 
     const auto* h_bf16 = static_cast<const Bf16WeightHandle*>(h_bf16_v);
@@ -2146,56 +2610,75 @@ extern "C" __declspec(dllexport) int hv41c_seq_back(
     size_t sv_bytes  = (size_t)(N_mid >> 5) * sizeof(float);
     size_t out_bytes = (size_t)w_fp8->N * sizeof(float);
 
-    if (!ensure_dev_buf(st, st.d_bf16_x, st.d_bf16_x_bytes, x_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp0, st.d_sq_tmp0_bytes, mid_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_av, st.d_sq_av_bytes, av_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_sv, st.d_sq_sv_bytes, sv_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_out0, st.d_sq_out0_bytes, out_bytes)) {
+    bool use_fused = (mode != 0 && (N_mid & 31) == 0 && N_mid >= 32);
+
+    SlotGuard guard(st);
+    LaneSlot& slot = guard.slot();
+
+    if (!ensure_dev_buf(st, slot.d_sq_av, slot.d_sq_av_bytes, av_bytes) ||
+        !ensure_dev_buf(st, slot.d_sq_sv, slot.d_sq_sv_bytes, sv_bytes)) {
+        return -3;
+    }
+    if (!use_fused) {
+        if (!ensure_dev_buf(st, slot.d_sq_tmp0, slot.d_sq_tmp0_bytes, mid_bytes)) {
+            return -3;
+        }
+    }
+
+    void* d_x_ptr = nullptr;
+    void* d_y_ptr = nullptr;
+    bool y_mapped = false;
+    if (!bind_input_buf(st, slot, slot.m_in0, slot.d_in0, slot.d_in0_bytes, x, x_bytes, &d_x_ptr) ||
+        !bind_output_buf(st, slot.m_out0, slot.d_out0, slot.d_out0_bytes, out_bytes, &d_y_ptr, &y_mapped)) {
         return -3;
     }
 
-    const void* src_x = x;
-    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, x_bytes)) {
-        memcpy(st.h_in0, x, x_bytes);
-        src_x = st.h_in0;
-    }
-    bool y_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, out_bytes);
-    void* dst_y = y_pinned ? st.h_out0 : static_cast<void*>(y);
+    if (ms_out) st.hip.eventRecord(slot.ev_start, slot.stream);
 
-    if (st.hip.memcpyAsync(st.d_bf16_x, src_x, x_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
-        return -4;
-    }
-    if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
-
-    {
-        void* p_W = h_bf16->d_W; void* p_x = st.d_bf16_x; void* p_y = st.d_sq_tmp0;
-        int p_M = 1, p_N = N_mid, p_K = K_bf, p_ng = ng, p_Kx = K_x, p_rnd = 1;
-        void* args[] = { &p_W, &p_x, &p_y, &p_M, &p_N, &p_K, &p_ng, &p_Kx, &p_rnd };
-        int rc;
-        if (mode == 0) {
-            unsigned int gx = (unsigned int)((N_mid + 63) / 64);
-            rc = st.hip.moduleLaunchKernel(st.fn_bf16_seq, gx, 1u, 1u, 64u, 1u, 1u, 0u, st.stream, args, nullptr);
-        } else {
-            rc = st.hip.moduleLaunchKernel(st.fn_bf16_w32, (unsigned int)N_mid, 1u, 1u, 32u, 1u, 1u, 0u, st.stream, args, nullptr);
+    if (use_fused) {
+        void* p_W = h_bf16->d_W; void* p_x = d_x_ptr;
+        void* p_av = slot.d_sq_av; void* p_sv = slot.d_sq_sv;
+        int p_N = N_mid, p_K = K_bf, p_ng = ng;
+        void* args[] = { &p_W, &p_x, &p_av, &p_sv, &p_N, &p_K, &p_ng };
+        if (st.hip.moduleLaunchKernel(st.fn_bf16_w32_quant32, (unsigned int)(N_mid >> 5), 1u, 1u, 256u, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS ||
+            launch_fp8_m1_on_stream(st, slot.stream, w_fp8, slot.d_sq_av, slot.d_sq_sv, d_y_ptr) != HIP_SUCCESS) {
+            return -4;
         }
-        if (rc != HIP_SUCCESS) return -4;
+    } else {
+        {
+            void* p_W = h_bf16->d_W; void* p_x = d_x_ptr; void* p_y = slot.d_sq_tmp0;
+            int p_M = 1, p_N = N_mid, p_K = K_bf, p_ng = ng, p_Kx = K_x, p_rnd = 1;
+            void* args[] = { &p_W, &p_x, &p_y, &p_M, &p_N, &p_K, &p_ng, &p_Kx, &p_rnd };
+            int rc;
+            if (mode == 0) {
+                unsigned int gx = (unsigned int)((N_mid + 63) / 64);
+                rc = st.hip.moduleLaunchKernel(st.fn_bf16_seq, gx, 1u, 1u, 64u, 1u, 1u, 0u, slot.stream, args, nullptr);
+            } else {
+                rc = st.hip.moduleLaunchKernel(st.fn_bf16_w32, (unsigned int)N_mid, 1u, 1u, 32u, 1u, 1u, 0u, slot.stream, args, nullptr);
+            }
+            if (rc != HIP_SUCCESS) return -4;
+        }
+        if (launch_act_quant32_dev(st, slot.stream, slot.d_sq_tmp0, slot.d_sq_av, slot.d_sq_sv, N_mid) != HIP_SUCCESS ||
+            launch_fp8_m1_on_stream(st, slot.stream, w_fp8, slot.d_sq_av, slot.d_sq_sv, d_y_ptr) != HIP_SUCCESS) {
+            return -4;
+        }
     }
-    if (launch_act_quant32_dev(st, st.d_sq_tmp0, st.d_sq_av, st.d_sq_sv, N_mid) != HIP_SUCCESS ||
-        launch_fp8_m1_dev(st, w_fp8, st.d_sq_av, st.d_sq_sv, st.d_sq_out0) != HIP_SUCCESS) {
-        return -4;
-    }
-    if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
+    if (ms_out) st.hip.eventRecord(slot.ev_stop, slot.stream);
 
-    if (st.hip.memcpyAsync(dst_y, st.d_sq_out0, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        st.hip.streamSynchronize(st.stream) != HIP_SUCCESS) {
+    if (!y_mapped) {
+        if (st.hip.memcpyAsync(y, d_y_ptr, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, slot.stream) != HIP_SUCCESS) {
+            return -4;
+        }
+    }
+    if (wait_stream_fast(st, slot, true) != HIP_SUCCESS) {
         return -4;
     }
-    if (y_pinned) {
-        memcpy(y, st.h_out0, out_bytes);
+    if (y_mapped) {
+        memcpy(y, slot.m_out0.h, out_bytes);
     }
     if (ms_out) {
         float ms = 0.0f;
-        *ms_out = (st.hip.eventElapsedTime(&ms, st.ev_start, st.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
+        *ms_out = (st.hip.eventElapsedTime(&ms, slot.ev_start, slot.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
     }
     return 0;
 }
@@ -2208,8 +2691,7 @@ extern "C" __declspec(dllexport) int hv41c_seq_front(
     float** out_ptrs, float* y_qa, float** y_q_ptrs, float* ms_out)
 {
     State& st = state();
-    std::lock_guard<std::mutex> lock(st.mu);
-    if (!st.initialized || !av || !sv || !W3 || n_w3 < 2 || M != 1 || !qn_dev || !W_q || n_q < 1 || !out_ptrs || !y_qa || !y_q_ptrs) {
+    if (!st.initialized.load(std::memory_order_acquire) || !av || !sv || !W3 || n_w3 < 2 || M != 1 || !qn_dev || !W_q || n_q < 1 || !out_ptrs || !y_qa || !y_q_ptrs) {
         return -1;
     }
     const auto* w_kv  = static_cast<const WeightHandle*>(W3[0]);
@@ -2223,6 +2705,7 @@ extern "C" __declspec(dllexport) int hv41c_seq_front(
     if (w_qa->K != K_in || w_qb->K != K_qa) return -2;
     if (w_iqb && w_iqb->K != K_qa) return -2;
 
+    bool has_iqb = (w_iqb != nullptr && y_q_ptrs[1] != nullptr);
     size_t av_in_bytes = (size_t)K_in * sizeof(int);
     size_t sv_in_bytes = (size_t)(K_in >> 5) * sizeof(float);
     size_t kv_bytes    = (size_t)w_kv->N * sizeof(float);
@@ -2230,83 +2713,111 @@ extern "C" __declspec(dllexport) int hv41c_seq_front(
     size_t av_q_bytes  = (size_t)K_qa * sizeof(int);
     size_t sv_q_bytes  = (size_t)(K_qa >> 5) * sizeof(float);
     size_t qb_bytes    = (size_t)w_qb->N * sizeof(float);
-    size_t iqb_bytes   = w_iqb ? (size_t)w_iqb->N * sizeof(float) : 0;
+    size_t iqb_bytes   = has_iqb ? (size_t)w_iqb->N * sizeof(float) : 0;
 
-    if (!ensure_dev_buf(st, st.d_a, st.d_a_bytes, av_in_bytes) ||
-        !ensure_dev_buf(st, st.d_s, st.d_s_bytes, sv_in_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp0, st.d_sq_tmp0_bytes, kv_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp1, st.d_sq_tmp1_bytes, qa_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_tmp2, st.d_sq_tmp2_bytes, qa_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_av, st.d_sq_av_bytes, av_q_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_sv, st.d_sq_sv_bytes, sv_q_bytes) ||
-        !ensure_dev_buf(st, st.d_sq_out0, st.d_sq_out0_bytes, qb_bytes) ||
-        (w_iqb && !ensure_dev_buf(st, st.d_sq_out1, st.d_sq_out1_bytes, iqb_bytes))) {
+    SlotGuard guard(st);
+    LaneSlot& slot = guard.slot();
+
+    if (!ensure_dev_buf(st, slot.d_sq_tmp1, slot.d_sq_tmp1_bytes, qa_bytes) ||
+        !ensure_dev_buf(st, slot.d_sq_av,   slot.d_sq_av_bytes,   av_q_bytes) ||
+        !ensure_dev_buf(st, slot.d_sq_sv,   slot.d_sq_sv_bytes,   sv_q_bytes)) {
         return -3;
     }
 
-    const void* src_av = av;
-    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, av_in_bytes)) {
-        memcpy(st.h_in0, av, av_in_bytes);
-        src_av = st.h_in0;
+    void* d_av_ptr = nullptr;
+    void* d_sv_ptr = nullptr;
+    void* d_kv_ptr = nullptr;
+    void* d_qa_ptr = nullptr;
+    void* d_qb_ptr = nullptr;
+    void* d_iqb_ptr = nullptr;
+    bool kv_mapped = false, qa_mapped = false, qb_mapped = false, iqb_mapped = false;
+    if (!bind_input_buf(st, slot, slot.m_in0, slot.d_in0, slot.d_in0_bytes, av, av_in_bytes, &d_av_ptr) ||
+        !bind_input_buf(st, slot, slot.m_in1, slot.d_in1, slot.d_in1_bytes, sv, sv_in_bytes, &d_sv_ptr) ||
+        !bind_output_buf(st, slot.m_out0, slot.d_out0, slot.d_out0_bytes, kv_bytes, &d_kv_ptr, &kv_mapped) ||
+        !bind_output_buf(st, slot.m_out1, slot.d_out1, slot.d_out1_bytes, qa_bytes, &d_qa_ptr, &qa_mapped) ||
+        !bind_output_buf(st, slot.m_out2, slot.d_out2, slot.d_out2_bytes, qb_bytes, &d_qb_ptr, &qb_mapped) ||
+        (has_iqb && !bind_output_buf(st, slot.m_out3, slot.d_out3, slot.d_out3_bytes, iqb_bytes, &d_iqb_ptr, &iqb_mapped))) {
+        return -3;
     }
-    const void* src_sv = sv;
-    if (ensure_pinned_buf(st, st.h_in1, st.h_in1_bytes, sv_in_bytes)) {
-        memcpy(st.h_in1, sv, sv_in_bytes);
-        src_sv = st.h_in1;
-    }
-    bool kv_pinned  = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, kv_bytes);
-    bool qa_pinned  = ensure_pinned_buf(st, st.h_out1, st.h_out1_bytes, qa_bytes);
-    bool qb_pinned  = ensure_pinned_buf(st, st.h_out2, st.h_out2_bytes, qb_bytes);
-    bool iqb_pinned = (w_iqb && y_q_ptrs[1]) ? ensure_pinned_buf(st, st.h_out3, st.h_out3_bytes, iqb_bytes) : false;
 
-    void* dst_kv  = kv_pinned  ? st.h_out0 : static_cast<void*>(out_ptrs[0]);
-    void* dst_qa  = qa_pinned  ? st.h_out1 : static_cast<void*>(y_qa);
-    void* dst_qb  = qb_pinned  ? st.h_out2 : static_cast<void*>(y_q_ptrs[0]);
-    void* dst_iqb = iqb_pinned ? st.h_out3 : static_cast<void*>(y_q_ptrs[1]);
+    if (ms_out) st.hip.eventRecord(slot.ev_start, slot.stream);
 
-    if (st.hip.memcpyAsync(st.d_a, src_av, av_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(st.d_s, src_sv, sv_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
-        return -4;
+    int nkb_in = K_in >> 5;
+    if (nkb_in >= 8) {
+        bool use_w16 = (nkb_in >= 16);
+        void* fn_pair = use_w16 ? st.fn_fp8_pair_w16 : st.fn_fp8_pair_w8;
+        unsigned int bx = use_w16 ? 512u : 256u;
+        unsigned int gx = (unsigned int)((w_kv->N >> 5) + (w_qa->N >> 5));
+        void* p_c0 = w_kv->d_codes; void* p_s0 = w_kv->d_scales; void* p_o0 = d_kv_ptr; int p_N0 = w_kv->N;
+        void* p_c1 = w_qa->d_codes; void* p_s1 = w_qa->d_scales; void* p_o1 = slot.d_sq_tmp1; int p_N1 = K_qa;
+        void* p_a = d_av_ptr; void* p_s = d_sv_ptr; int p_K = K_in;
+        void* args[] = { &p_c0, &p_s0, &p_o0, &p_N0, &p_c1, &p_s1, &p_o1, &p_N1, &p_a, &p_s, &p_K };
+        if (st.hip.moduleLaunchKernel(fn_pair, gx, 1u, 1u, bx, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS) {
+            return -4;
+        }
+    } else {
+        if (launch_fp8_m1_on_stream(st, slot.stream, w_kv, d_av_ptr, d_sv_ptr, d_kv_ptr) != HIP_SUCCESS ||
+            launch_fp8_m1_on_stream(st, slot.stream, w_qa, d_av_ptr, d_sv_ptr, slot.d_sq_tmp1) != HIP_SUCCESS) {
+            return -4;
+        }
     }
-    if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
 
-    if (launch_fp8_m1_dev(st, w_kv, st.d_a, st.d_s, st.d_sq_tmp0) != HIP_SUCCESS ||
-        launch_fp8_m1_dev(st, w_qa, st.d_a, st.d_s, st.d_sq_tmp1) != HIP_SUCCESS) {
-        return -4;
-    }
-    {
-        void* p_x = st.d_sq_tmp1; void* p_w = const_cast<float*>(qn_dev); void* p_o = st.d_sq_tmp2;
+    if ((K_qa & 31) == 0 && K_qa > 0) {
+        void* p_x = slot.d_sq_tmp1; void* p_w = const_cast<float*>(qn_dev); void* p_o = d_qa_ptr;
+        void* p_av = slot.d_sq_av; void* p_sv = slot.d_sq_sv;
+        int p_K = K_qa; float p_eps = eps;
+        void* args[] = { &p_x, &p_w, &p_o, &p_av, &p_sv, &p_K, &p_eps };
+        if (st.hip.moduleLaunchKernel(st.fn_e1_rmsnorm_quant32, 1u, 1u, 1u, 64u, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS) {
+            return -4;
+        }
+    } else {
+        void* p_x = slot.d_sq_tmp1; void* p_w = const_cast<float*>(qn_dev); void* p_o = d_qa_ptr;
         int p_K = K_qa; float p_eps = eps;
         void* args[] = { &p_x, &p_w, &p_o, &p_K, &p_eps };
-        if (st.hip.moduleLaunchKernel(st.fn_e1_rmsnorm, 1u, 1u, 1u, 64u, 1u, 1u, 0u, st.stream, args, nullptr) != HIP_SUCCESS) {
+        if (st.hip.moduleLaunchKernel(st.fn_e1_rmsnorm, 1u, 1u, 1u, 64u, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS ||
+            launch_act_quant32_dev(st, slot.stream, d_qa_ptr, slot.d_sq_av, slot.d_sq_sv, K_qa) != HIP_SUCCESS) {
             return -4;
         }
     }
-    if (launch_act_quant32_dev(st, st.d_sq_tmp2, st.d_sq_av, st.d_sq_sv, K_qa) != HIP_SUCCESS ||
-        launch_fp8_m1_dev(st, w_qb, st.d_sq_av, st.d_sq_sv, st.d_sq_out0) != HIP_SUCCESS) {
-        return -4;
-    }
-    if (w_iqb && y_q_ptrs[1]) {
-        if (launch_fp8_m1_dev(st, w_iqb, st.d_sq_av, st.d_sq_sv, st.d_sq_out1) != HIP_SUCCESS) {
-            return -4;
-        }
-    }
-    if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
 
-    if (st.hip.memcpyAsync(dst_kv,  st.d_sq_tmp0, kv_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(dst_qa,  st.d_sq_tmp2, qa_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(dst_qb,  st.d_sq_out0, qb_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        (w_iqb && y_q_ptrs[1] && st.hip.memcpyAsync(dst_iqb, st.d_sq_out1, iqb_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS) ||
-        st.hip.streamSynchronize(st.stream) != HIP_SUCCESS) {
+    int nkb_qa = K_qa >> 5;
+    if (has_iqb) {
+        if (nkb_qa >= 8) {
+            unsigned int gx = (unsigned int)((w_qb->N >> 5) + (w_iqb->N >> 5));
+            void* p_c0 = w_qb->d_codes;  void* p_s0 = w_qb->d_scales;  void* p_o0 = d_qb_ptr;  int p_N0 = w_qb->N;
+            void* p_c1 = w_iqb->d_codes; void* p_s1 = w_iqb->d_scales; void* p_o1 = d_iqb_ptr; int p_N1 = w_iqb->N;
+            void* p_a = slot.d_sq_av; void* p_s = slot.d_sq_sv; int p_K = K_qa;
+            void* args[] = { &p_c0, &p_s0, &p_o0, &p_N0, &p_c1, &p_s1, &p_o1, &p_N1, &p_a, &p_s, &p_K };
+            if (st.hip.moduleLaunchKernel(st.fn_fp8_pair_w8, gx, 1u, 1u, 256u, 1u, 1u, 0u, slot.stream, args, nullptr) != HIP_SUCCESS) {
+                return -4;
+            }
+        } else {
+            if (launch_fp8_m1_on_stream(st, slot.stream, w_qb,  slot.d_sq_av, slot.d_sq_sv, d_qb_ptr) != HIP_SUCCESS ||
+                launch_fp8_m1_on_stream(st, slot.stream, w_iqb, slot.d_sq_av, slot.d_sq_sv, d_iqb_ptr) != HIP_SUCCESS) {
+                return -4;
+            }
+        }
+    } else {
+        if (launch_fp8_m1_on_stream(st, slot.stream, w_qb, slot.d_sq_av, slot.d_sq_sv, d_qb_ptr) != HIP_SUCCESS) {
+            return -4;
+        }
+    }
+    if (ms_out) st.hip.eventRecord(slot.ev_stop, slot.stream);
+
+    if ((!kv_mapped  && st.hip.memcpyAsync(out_ptrs[0], d_kv_ptr,  kv_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, slot.stream) != HIP_SUCCESS) ||
+        (!qa_mapped  && st.hip.memcpyAsync(y_qa,        d_qa_ptr,  qa_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, slot.stream) != HIP_SUCCESS) ||
+        (!qb_mapped  && st.hip.memcpyAsync(y_q_ptrs[0], d_qb_ptr,  qb_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, slot.stream) != HIP_SUCCESS) ||
+        (has_iqb && !iqb_mapped && st.hip.memcpyAsync(y_q_ptrs[1], d_iqb_ptr, iqb_bytes, HIP_MEMCPY_DEVICE_TO_HOST, slot.stream) != HIP_SUCCESS) ||
+        wait_stream_fast(st, slot, true) != HIP_SUCCESS) {
         return -4;
     }
-    if (kv_pinned)  memcpy(out_ptrs[0], st.h_out0, kv_bytes);
-    if (qa_pinned)  memcpy(y_qa,        st.h_out1, qa_bytes);
-    if (qb_pinned)  memcpy(y_q_ptrs[0], st.h_out2, qb_bytes);
-    if (iqb_pinned) memcpy(y_q_ptrs[1], st.h_out3, iqb_bytes);
+    if (kv_mapped)             memcpy(out_ptrs[0], slot.m_out0.h, kv_bytes);
+    if (qa_mapped)             memcpy(y_qa,        slot.m_out1.h, qa_bytes);
+    if (qb_mapped)             memcpy(y_q_ptrs[0], slot.m_out2.h, qb_bytes);
+    if (has_iqb && iqb_mapped) memcpy(y_q_ptrs[1], slot.m_out3.h, iqb_bytes);
     if (ms_out) {
         float ms = 0.0f;
-        *ms_out = (st.hip.eventElapsedTime(&ms, st.ev_start, st.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
+        *ms_out = (st.hip.eventElapsedTime(&ms, slot.ev_start, slot.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
     }
     return 0;
 }
@@ -2362,12 +2873,14 @@ struct CorrState {
 
     void* d_lut32kb = nullptr;
     void* d_dec[DEC_SLOTS] = {};
+    bool ring_zero_copy = false;
     float* h_yg[MAX_RING] = {};
     float* h_yu[MAX_RING] = {};
     float* h_y2[MAX_RING] = {};
 
     void* d_ring_scratch = nullptr;
     uint8_t* h_ring_in = nullptr;
+    void* dh_ring_in = nullptr;
     void* d_av13[MAX_RING] = {};
     void* d_sv13[MAX_RING] = {};
     void* d_bad13[MAX_RING] = {};
@@ -2432,9 +2945,11 @@ static int corr_launch_fp4_dev(
         corr_set_err(cs, "hv41_fp4_linear_kernel launch failed");
         return -1;
     }
-    if (st.hip.memcpyAsync(h_out, d_y, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_launch_fp4 D2H failed");
-        return -1;
+    if (!cs.ring_zero_copy) {
+        if (st.hip.memcpyAsync(h_out, d_y, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, cs.comp_stream) != HIP_SUCCESS) {
+            corr_set_err(cs, "corr_launch_fp4 D2H failed");
+            return -1;
+        }
     }
     return 0;
 }
@@ -2490,9 +3005,9 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
     cs.dev_bytes = dev_bytes;
     cs.pinned_host_bytes = 0;
 
-    if (st.hip.streamCreate(&cs.h2d_stream) != HIP_SUCCESS ||
-        st.hip.streamCreate(&cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "streamCreate failed");
+    if (st.hip.streamCreateWithFlags(&cs.h2d_stream, HIP_STREAM_NON_BLOCKING) != HIP_SUCCESS ||
+        st.hip.streamCreateWithFlags(&cs.comp_stream, HIP_STREAM_NON_BLOCKING) != HIP_SUCCESS) {
+        corr_set_err(cs, "streamCreateWithFlags failed");
         return -1;
     }
 
@@ -2519,29 +3034,59 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
         corr_set_err(cs, "lut32kb alloc/copy failed");
         return -1;
     }
-    if (st.hip.malloc(&cs.d_ring_scratch, (size_t)CorrState::MAX_RING * CorrState::SLOT_DEV_BYTES) != HIP_SUCCESS ||
-        st.hip.hostMalloc((void**)&cs.h_ring_in, (size_t)CorrState::MAX_RING * CorrState::SLOT_HOST_IN_BYTES, 0u) != HIP_SUCCESS) {
-        corr_set_err(cs, "scratch ring alloc failed");
-        return -1;
-    }
     for (int i = 0; i < CorrState::DEC_SLOTS; ++i) {
         if (st.hip.malloc(&cs.d_dec[i], CorrState::DEC_SLOT_BYTES) != HIP_SUCCESS) {
             corr_set_err(cs, "dec slot alloc failed");
             return -1;
         }
     }
-    for (int i = 0; i < CorrState::MAX_RING; ++i) {
-        uint8_t* db = static_cast<uint8_t*>(cs.d_ring_scratch) + (size_t)i * CorrState::SLOT_DEV_BYTES;
-        cs.d_av13[i]  = db + 0;
-        cs.d_sv13[i]  = db + 163840;
-        cs.d_bad13[i] = db + 168960;
-        cs.d_yg[i]    = db + 169216;
-        cs.d_yu[i]    = db + 242944;
-        cs.d_av2[i]   = db + 316672;
-        cs.d_sv2[i]   = db + 390400;
-        cs.d_bad2[i]  = db + 392960;
-        cs.d_y2[i]    = db + 393216;
 
+    auto try_mapped = [&](void** h_out, void** d_out, size_t sz) -> bool {
+        if (st.hip.hostMalloc(h_out, sz, HIP_HOST_MALLOC_PORTABLE_MAPPED) != HIP_SUCCESS || !*h_out) {
+            *h_out = nullptr;
+            *d_out = nullptr;
+            return false;
+        }
+        if (st.hip.hostGetDevicePointer(d_out, *h_out, 0u) != HIP_SUCCESS || !*d_out) {
+            st.hip.hostFree(*h_out);
+            *h_out = nullptr;
+            *d_out = nullptr;
+            return false;
+        }
+        return true;
+    };
+
+    void* zc_yg[CorrState::MAX_RING] = {};
+    void* zc_yu[CorrState::MAX_RING] = {};
+    void* zc_y2[CorrState::MAX_RING] = {};
+    bool zc_ok = try_mapped((void**)&cs.h_ring_in, &cs.dh_ring_in,
+                            (size_t)CorrState::MAX_RING * CorrState::SLOT_HOST_IN_BYTES);
+    if (zc_ok) {
+        for (int i = 0; i < CorrState::MAX_RING; ++i) {
+            if (!try_mapped((void**)&cs.h_yg[i], &zc_yg[i], 8u * 2304u * sizeof(float)) ||
+                !try_mapped((void**)&cs.h_yu[i], &zc_yu[i], 8u * 2304u * sizeof(float)) ||
+                !try_mapped((void**)&cs.h_y2[i], &zc_y2[i], 8u * 5120u * sizeof(float))) {
+                zc_ok = false;
+                break;
+            }
+        }
+    }
+    if (!zc_ok) {
+        for (int i = 0; i < CorrState::MAX_RING; ++i) {
+            if (cs.h_yg[i]) { st.hip.hostFree(cs.h_yg[i]); cs.h_yg[i] = nullptr; }
+            if (cs.h_yu[i]) { st.hip.hostFree(cs.h_yu[i]); cs.h_yu[i] = nullptr; }
+            if (cs.h_y2[i]) { st.hip.hostFree(cs.h_y2[i]); cs.h_y2[i] = nullptr; }
+        }
+        if (cs.h_ring_in) { st.hip.hostFree(cs.h_ring_in); cs.h_ring_in = nullptr; cs.dh_ring_in = nullptr; }
+        if (st.hip.malloc(&cs.d_ring_scratch, (size_t)CorrState::MAX_RING * CorrState::SLOT_DEV_BYTES) != HIP_SUCCESS ||
+            st.hip.hostMalloc((void**)&cs.h_ring_in, (size_t)CorrState::MAX_RING * CorrState::SLOT_HOST_IN_BYTES, 0u) != HIP_SUCCESS) {
+            corr_set_err(cs, "scratch ring alloc failed");
+            return -1;
+        }
+    }
+    cs.ring_zero_copy = zc_ok;
+
+    for (int i = 0; i < CorrState::MAX_RING; ++i) {
         uint8_t* hb = cs.h_ring_in + (size_t)i * CorrState::SLOT_HOST_IN_BYTES;
         cs.h_av13[i]  = hb + 0;
         cs.h_sv13[i]  = hb + 163840;
@@ -2550,16 +3095,44 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
         cs.h_sv2[i]   = hb + 242944;
         cs.h_bad2[i]  = hb + 245504;
 
-        if (st.hip.hostMalloc((void**)&cs.h_yg[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
-            st.hip.hostMalloc((void**)&cs.h_yu[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
-            st.hip.hostMalloc((void**)&cs.h_y2[i], 8u * 5120u * sizeof(float), 0u) != HIP_SUCCESS ||
-            st.hip.eventCreate(&cs.ev_dec_start[i]) != HIP_SUCCESS ||
+        if (cs.ring_zero_copy) {
+            uint8_t* dhb = static_cast<uint8_t*>(cs.dh_ring_in) + (size_t)i * CorrState::SLOT_HOST_IN_BYTES;
+            cs.d_av13[i]  = dhb + 0;
+            cs.d_sv13[i]  = dhb + 163840;
+            cs.d_bad13[i] = dhb + 168960;
+            cs.d_av2[i]   = dhb + 169216;
+            cs.d_sv2[i]   = dhb + 242944;
+            cs.d_bad2[i]  = dhb + 245504;
+            cs.d_yg[i]    = zc_yg[i];
+            cs.d_yu[i]    = zc_yu[i];
+            cs.d_y2[i]    = zc_y2[i];
+        } else {
+            uint8_t* db = static_cast<uint8_t*>(cs.d_ring_scratch) + (size_t)i * CorrState::SLOT_DEV_BYTES;
+            cs.d_av13[i]  = db + 0;
+            cs.d_sv13[i]  = db + 163840;
+            cs.d_bad13[i] = db + 168960;
+            cs.d_yg[i]    = db + 169216;
+            cs.d_yu[i]    = db + 242944;
+            cs.d_av2[i]   = db + 316672;
+            cs.d_sv2[i]   = db + 390400;
+            cs.d_bad2[i]  = db + 392960;
+            cs.d_y2[i]    = db + 393216;
+
+            if (st.hip.hostMalloc((void**)&cs.h_yg[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
+                st.hip.hostMalloc((void**)&cs.h_yu[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
+                st.hip.hostMalloc((void**)&cs.h_y2[i], 8u * 5120u * sizeof(float), 0u) != HIP_SUCCESS) {
+                corr_set_err(cs, "ring alloc failed");
+                return -1;
+            }
+        }
+
+        if (st.hip.eventCreate(&cs.ev_dec_start[i]) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_dec_end[i]) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_w13_start[i]) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_w13_end[i]) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_w2_start[i]) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_w2_end[i]) != HIP_SUCCESS) {
-            corr_set_err(cs, "ring alloc failed");
+            corr_set_err(cs, "ring event alloc failed");
             return -1;
         }
     }
@@ -2798,11 +3371,13 @@ extern "C" __declspec(dllexport) int hv41c_corr_w13(
     memcpy(cs.h_sv13[out_slot], sv, sv_bytes);
     memcpy(cs.h_bad13[out_slot], bad, (size_t)M);
 
-    if (st.hip.memcpyAsync(cs.d_av13[out_slot], cs.h_av13[out_slot], av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(cs.d_sv13[out_slot], cs.h_sv13[out_slot], sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(cs.d_bad13[out_slot], cs.h_bad13[out_slot], (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_w13 H2D failed");
-        return -1;
+    if (!cs.ring_zero_copy) {
+        if (st.hip.memcpyAsync(cs.d_av13[out_slot], cs.h_av13[out_slot], av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+            st.hip.memcpyAsync(cs.d_sv13[out_slot], cs.h_sv13[out_slot], sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+            st.hip.memcpyAsync(cs.d_bad13[out_slot], cs.h_bad13[out_slot], (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
+            corr_set_err(cs, "corr_w13 H2D failed");
+            return -1;
+        }
     }
 
     st.hip.eventRecord(cs.ev_w13_start[out_slot], cs.comp_stream);
@@ -2833,11 +3408,13 @@ extern "C" __declspec(dllexport) int hv41c_corr_w2(
     memcpy(cs.h_sv2[out_slot], sv, sv_bytes);
     memcpy(cs.h_bad2[out_slot], bad, (size_t)M);
 
-    if (st.hip.memcpyAsync(cs.d_av2[out_slot], cs.h_av2[out_slot], av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(cs.d_sv2[out_slot], cs.h_sv2[out_slot], sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(cs.d_bad2[out_slot], cs.h_bad2[out_slot], (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_w2 H2D failed");
-        return -1;
+    if (!cs.ring_zero_copy) {
+        if (st.hip.memcpyAsync(cs.d_av2[out_slot], cs.h_av2[out_slot], av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+            st.hip.memcpyAsync(cs.d_sv2[out_slot], cs.h_sv2[out_slot], sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+            st.hip.memcpyAsync(cs.d_bad2[out_slot], cs.h_bad2[out_slot], (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
+            corr_set_err(cs, "corr_w2 H2D failed");
+            return -1;
+        }
     }
 
     st.hip.eventRecord(cs.ev_w2_start[out_slot], cs.comp_stream);
