@@ -671,6 +671,9 @@ class DirectHipHv41c:
 
 
 def load_hv41cuda(dll_path: str):
+    if dll_path == "__direct_only__":
+        cpp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hv41cuda_hip.cpp")
+        return DirectHipHv41c(cpp_path)
     prom_bin = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(dll_path))),
         "release_0.2",
@@ -1404,8 +1407,12 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
         dll.hv41c_corr_hs_wait.restype = None
         dll.hv41c_corr_load_gc.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint64]
         dll.hv41c_corr_load_gc.restype = ctypes.c_int
+        dll.hv41c_corr_load_fp4.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint64)]
+        dll.hv41c_corr_load_fp4.restype = ctypes.c_int
         dll.hv41c_corr_decode.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(GcMat), ctypes.c_int]
         dll.hv41c_corr_decode.restype = ctypes.c_int
+        dll.hv41c_corr_decode_fp4.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        dll.hv41c_corr_decode_fp4.restype = ctypes.c_int
         dll.hv41c_corr_read_decoded.argtypes = [ctypes.c_int, ctypes.c_void_p]
         dll.hv41c_corr_read_decoded.restype = ctypes.c_int
         dll.hv41c_corr_w13.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
@@ -1425,9 +1432,14 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
 
         lut32 = rng.integers(0, 16, size=32768, dtype=np.uint8)
         open_info = (ctypes.c_int64 * 4)()
-        assert dll.hv41c_corr_open(2, 32 * 1024 * 1024, 2, 32 * 1024 * 1024, lut32.ctypes.data, 256, open_info) == 0
+        hs_b = 12 * 1024 * 1024
+        dev_b = 24 * 1024 * 1024
+        assert dll.hv41c_corr_open(6, hs_b, 2, dev_b, lut32.ctypes.data, 256, open_info) == 0
+        assert open_info[2] == 6 * hs_b + 2 * dev_b
+        assert open_info[3] == 2
 
-        shapes = [(2304, 5120), (2304, 5120), (5120, 2304)]
+        # Real NVIDIA matrix order: [w1, w2, w3]
+        shapes = [(2304, 5120), (5120, 2304), (2304, 5120)]
         pl_bufs, b2_bufs, p0s, p1s, tbls, pidxs, pbytess = [], [], [], [], [], [], []
         for N_c, K_c in shapes:
             G_n, K_blk = N_c >> 3, K_c >> 5
@@ -1438,21 +1450,19 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
             pidx = np.arange(G_n + 1, dtype=np.uint32) * np.uint32(1024)
             pbytes = rng.integers(0, 256, size=(G_n + 2) * 256, dtype=np.uint8)
             hdr = np.zeros(256, dtype=np.uint8)
-            p1_off = 256
-            pidx_off = p1_off + p1.nbytes
-            pb_off = pidx_off + pidx.nbytes
             pl = np.concatenate([hdr, p1.reshape(-1), pidx.view(np.uint8), pbytes])
             b2 = np.concatenate([p0.reshape(-1), tbl.reshape(-1)])
             pl_bufs.append(pl); b2_bufs.append(b2)
             p0s.append(p0); p1s.append(p1); tbls.append(tbl); pidxs.append(pidx); pbytess.append(pbytes)
 
         b2_cat = np.concatenate(b2_bufs)
-        h_ptr = dll.hv41c_corr_host(0)
+        # Exercise hs >= dev_cnt and dev_slot != hs (dev_slot=1, hs=4, dec_slot=1, ev/out_slot=5)
+        h_ptr = dll.hv41c_corr_host(4)
         assert h_ptr
         ctypes.memmove(h_ptr, b2_cat.ctypes.data, b2_cat.nbytes)
         ptrs_arr = (ctypes.c_void_p * 3)(pl_bufs[0].ctypes.data, pl_bufs[1].ctypes.data, pl_bufs[2].ctypes.data)
         sizes_arr = (ctypes.c_uint64 * 3)(pl_bufs[0].nbytes, pl_bufs[1].nbytes, pl_bufs[2].nbytes)
-        assert dll.hv41c_corr_load_gc(0, 0, ptrs_arr, sizes_arr, b2_cat.nbytes) == 0
+        assert dll.hv41c_corr_load_gc(1, 4, ptrs_arr, sizes_arr, b2_cat.nbytes) == 0
 
         pl_tot = sum(x.nbytes for x in pl_bufs)
         mats = (GcMat * 3)()
@@ -1463,27 +1473,27 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
             b2_cur += b2_bufs[i].nbytes
             pl_cur += pl_bufs[i].nbytes
 
-        assert dll.hv41c_corr_decode(0, 0, mats, 0) == 0
+        assert dll.hv41c_corr_decode(1, 1, mats, 5) == 0
         dec_host = np.empty(0x11EE000, dtype=np.uint8)
-        assert dll.hv41c_corr_read_decoded(0, dec_host.ctypes.data) == 0
+        assert dll.hv41c_corr_read_decoded(1, dec_host.ctypes.data) == 0
 
         M_c = 2
         av_13 = rng.integers(-50000, 50001, size=(M_c, 5120), dtype=np.int32)
         sv_13 = rng.uniform(0.5, 1.5, size=(M_c, 160)).astype(np.float32)
         bad_13 = np.array([0, 1], dtype=np.uint8)
-        assert dll.hv41c_corr_w13(0, 0, av_13.ctypes.data, sv_13.ctypes.data, bad_13.ctypes.data, M_c) == 0
-        assert dll.hv41c_corr_wait13(0) == 0
-        yg_gpu = np.ctypeslib.as_array(dll.hv41c_corr_yg(0), shape=(M_c, 2304)).copy()
-        yu_gpu = np.ctypeslib.as_array(dll.hv41c_corr_yu(0), shape=(M_c, 2304)).copy()
+        assert dll.hv41c_corr_w13(1, 5, av_13.ctypes.data, sv_13.ctypes.data, bad_13.ctypes.data, M_c) == 0
+        assert dll.hv41c_corr_wait13(5) == 0
+        yg_gpu = np.ctypeslib.as_array(dll.hv41c_corr_yg(5), shape=(M_c, 2304)).copy()
+        yu_gpu = np.ctypeslib.as_array(dll.hv41c_corr_yu(5), shape=(M_c, 2304)).copy()
 
         av_2 = rng.integers(-50000, 50001, size=(M_c, 2304), dtype=np.int32)
         sv_2 = rng.uniform(0.5, 1.5, size=(M_c, 72)).astype(np.float32)
         bad_2 = np.array([0, 0], dtype=np.uint8)
-        assert dll.hv41c_corr_w2(0, 0, av_2.ctypes.data, sv_2.ctypes.data, bad_2.ctypes.data, M_c) == 0
-        assert dll.hv41c_corr_wait2(0) == 0
-        y2_gpu = np.ctypeslib.as_array(dll.hv41c_corr_y2(0), shape=(M_c, 5120)).copy()
+        assert dll.hv41c_corr_w2(1, 5, av_2.ctypes.data, sv_2.ctypes.data, bad_2.ctypes.data, M_c) == 0
+        assert dll.hv41c_corr_wait2(5) == 0
+        y2_gpu = np.ctypeslib.as_array(dll.hv41c_corr_y2(5), shape=(M_c, 5120)).copy()
 
-        # Verify decoded codes & scales (spot check all 3 mats via dec_host) + w1/w3/w2 against CPU ref
+        # Verify decoded codes & scales (slot 0=w1, slot 1=w2, slot 2=w3) + w13/w2 against CPU ref
         KV = np.array([0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12], dtype=np.int64)
         def _cpu_dot8(codes, scales, av, sv, bad, N_c, K_c):
             K_blk = K_c >> 5
@@ -1502,12 +1512,12 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
                 out[m, :] = round_bf16_in_f32_u32(acc).view(np.float32)
             return out
 
-        c_w1 = dec_host[0 : 0x5A0000].reshape(2304, 2560)
-        s_w1 = dec_host[0x5A0000 : 0x5FA000].reshape(2304, 160)
-        c_w3 = dec_host[0x5FA000 : 0x5FA000 + 0x5A0000].reshape(2304, 2560)
-        s_w3 = dec_host[0x5FA000 + 0x5A0000 : 0xBF4000].reshape(2304, 160)
-        c_w2 = dec_host[0xBF4000 : 0xBF4000 + 0x5A0000].reshape(5120, 1152)
-        s_w2 = dec_host[0xBF4000 + 0x5A0000 : 0x11EE000].reshape(5120, 72)
+        c_w1 = np.ascontiguousarray(dec_host[0 : 0x5A0000].reshape(2304, 2560))
+        s_w1 = np.ascontiguousarray(dec_host[0x5A0000 : 0x5FA000].reshape(2304, 160))
+        c_w2 = np.ascontiguousarray(dec_host[0x5FA000 : 0x5FA000 + 0x5A0000].reshape(5120, 1152))
+        s_w2 = np.ascontiguousarray(dec_host[0x5FA000 + 0x5A0000 : 0xBF4000].reshape(5120, 72))
+        c_w3 = np.ascontiguousarray(dec_host[0xBF4000 : 0xBF4000 + 0x5A0000].reshape(2304, 2560))
+        s_w3 = np.ascontiguousarray(dec_host[0xBF4000 + 0x5A0000 : 0x11EE000].reshape(2304, 160))
 
         ref_yg = _cpu_dot8(c_w1, s_w1, av_13, sv_13, bad_13, 2304, 5120)
         ref_yu = _cpu_dot8(c_w3, s_w3, av_13, sv_13, bad_13, 2304, 5120)
@@ -1521,6 +1531,29 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
         print(f"  corr_abi w13+w2 M={M_c} (2304x5120x2 + 5120x2304): outputs={n_corr}, mismatches={bad_corr}")
         total_out += n_corr
         total_bad += bad_corr
+
+        # Test FP4 upload > hs_bytes (18.8 MB total > 12 MiB hs_bytes, < 24 MiB dev_bytes)
+        fp4_arrs = [c_w1, s_w1, c_w2, s_w2, c_w3, s_w3]
+        fp4_ptrs = (ctypes.c_void_p * 6)(*(a.ctypes.data for a in fp4_arrs))
+        fp4_sizes = (ctypes.c_uint64 * 6)(*(a.nbytes for a in fp4_arrs))
+        assert dll.hv41c_corr_load_fp4(0, fp4_ptrs, fp4_sizes) == 0
+        assert dll.hv41c_corr_decode_fp4(0, 0, 7) == 0
+        assert dll.hv41c_corr_w13(0, 7, av_13.ctypes.data, sv_13.ctypes.data, bad_13.ctypes.data, M_c) == 0
+        assert dll.hv41c_corr_wait13(7) == 0
+        yg_fp4 = np.ctypeslib.as_array(dll.hv41c_corr_yg(7), shape=(M_c, 2304)).copy()
+        yu_fp4 = np.ctypeslib.as_array(dll.hv41c_corr_yu(7), shape=(M_c, 2304)).copy()
+        assert dll.hv41c_corr_w2(0, 7, av_2.ctypes.data, sv_2.ctypes.data, bad_2.ctypes.data, M_c) == 0
+        assert dll.hv41c_corr_wait2(7) == 0
+        y2_fp4 = np.ctypeslib.as_array(dll.hv41c_corr_y2(7), shape=(M_c, 5120)).copy()
+        bad_fp4 = (
+            int(np.count_nonzero(yg_fp4.view(np.uint32) != ref_yg.view(np.uint32)))
+            + int(np.count_nonzero(yu_fp4.view(np.uint32) != ref_yu.view(np.uint32)))
+            + int(np.count_nonzero(y2_fp4.view(np.uint32) != ref_y2.view(np.uint32)))
+        )
+        n_fp4 = yg_fp4.size + yu_fp4.size + y2_fp4.size
+        print(f"  corr_abi fp4 w13+w2 M={M_c} ({sum(a.nbytes for a in fp4_arrs)} B): outputs={n_fp4}, mismatches={bad_fp4}")
+        total_out += n_fp4
+        total_bad += bad_fp4
 
     return total_out, total_bad
 

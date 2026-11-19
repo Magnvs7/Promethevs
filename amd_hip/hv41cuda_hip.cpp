@@ -2046,9 +2046,11 @@ struct CorrState {
     uint64_t hs_bytes = 0;
     uint64_t dev_bytes = 0;
     uint64_t h2d_bytes_total = 0;
+    uint64_t pinned_host_bytes = 0;
 
     static constexpr int MAX_SLOTS = 32;
     static constexpr int MAX_RING = 24;
+    static constexpr int DEC_SLOTS = 2;
     static constexpr size_t MAT_CODES_BYTES = 0x5A0000;
     static constexpr size_t MAT_SCALES_BYTES = 0x5A000;
     static constexpr size_t MAT_STRIDE = 0x5FA000;
@@ -2061,13 +2063,15 @@ struct CorrState {
     void* dev_slots[MAX_SLOTS] = {};
     void* ev_hs[MAX_SLOTS] = {};
     bool hs_pending[MAX_SLOTS] = {};
-    void* ev_dev[MAX_SLOTS] = {};
-    bool dev_pending[MAX_SLOTS] = {};
+    void* ev_dev_h2d[MAX_SLOTS] = {};
+    bool dev_stage_pending[MAX_SLOTS] = {};
+    void* ev_dev_comp[MAX_SLOTS] = {};
+    bool dev_comp_pending[MAX_SLOTS] = {};
     uint64_t fp4_off[MAX_SLOTS][6] = {};
     uint64_t fp4_sz[MAX_SLOTS][6] = {};
 
     void* d_lut32kb = nullptr;
-    void* d_dec[MAX_RING] = {};
+    void* d_dec[DEC_SLOTS] = {};
     float* h_yg[MAX_RING] = {};
     float* h_yu[MAX_RING] = {};
     float* h_y2[MAX_RING] = {};
@@ -2173,7 +2177,7 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
 
     size_t vram_free = 0, vram_total = 0;
     st.hip.memGetInfo(&vram_free, &vram_total);
-    uint64_t fixed_bytes = (uint64_t)CorrState::MAX_RING * CorrState::DEC_SLOT_BYTES + 32768ull + 512ull * 1024ull;
+    uint64_t fixed_bytes = (uint64_t)CorrState::DEC_SLOTS * CorrState::DEC_SLOT_BYTES + 32768ull + 512ull * 1024ull;
     uint64_t floor_bytes = (floor_mib > 0) ? ((uint64_t)floor_mib << 20) : 0ull;
     while (dev_cnt >= 2) {
         if ((uint64_t)vram_free >= floor_bytes + fixed_bytes + (uint64_t)dev_cnt * dev_bytes) break;
@@ -2188,6 +2192,7 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
     cs.dev_cnt = dev_cnt;
     cs.hs_bytes = hs_bytes;
     cs.dev_bytes = dev_bytes;
+    cs.pinned_host_bytes = 0;
 
     if (st.hip.streamCreate(&cs.h2d_stream) != HIP_SUCCESS ||
         st.hip.streamCreate(&cs.comp_stream) != HIP_SUCCESS) {
@@ -2197,18 +2202,21 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
 
     for (int i = 0; i < hs_cnt; ++i) {
         if (st.hip.hostMalloc(&cs.host_slots[i], (size_t)hs_bytes, 0u) != HIP_SUCCESS ||
-            st.hip.hostMalloc(&cs.host_stage[i], (size_t)dev_bytes, 0u) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_hs[i]) != HIP_SUCCESS) {
             corr_set_err(cs, "host slot alloc failed");
             return -1;
         }
+        cs.pinned_host_bytes += hs_bytes;
     }
     for (int i = 0; i < dev_cnt; ++i) {
-        if (st.hip.malloc(&cs.dev_slots[i], (size_t)dev_bytes) != HIP_SUCCESS ||
-            st.hip.eventCreate(&cs.ev_dev[i]) != HIP_SUCCESS) {
+        if (st.hip.hostMalloc(&cs.host_stage[i], (size_t)dev_bytes, 0u) != HIP_SUCCESS ||
+            st.hip.malloc(&cs.dev_slots[i], (size_t)dev_bytes) != HIP_SUCCESS ||
+            st.hip.eventCreate(&cs.ev_dev_h2d[i]) != HIP_SUCCESS ||
+            st.hip.eventCreate(&cs.ev_dev_comp[i]) != HIP_SUCCESS) {
             corr_set_err(cs, "device slot alloc failed");
             return -1;
         }
+        cs.pinned_host_bytes += dev_bytes;
     }
     if (st.hip.malloc(&cs.d_lut32kb, 32768) != HIP_SUCCESS ||
         st.hip.memcpy(cs.d_lut32kb, tables_32kb, 32768, HIP_MEMCPY_HOST_TO_DEVICE) != HIP_SUCCESS) {
@@ -2222,9 +2230,14 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
         corr_set_err(cs, "scratch alloc failed");
         return -1;
     }
+    for (int i = 0; i < CorrState::DEC_SLOTS; ++i) {
+        if (st.hip.malloc(&cs.d_dec[i], CorrState::DEC_SLOT_BYTES) != HIP_SUCCESS) {
+            corr_set_err(cs, "dec slot alloc failed");
+            return -1;
+        }
+    }
     for (int i = 0; i < CorrState::MAX_RING; ++i) {
-        if (st.hip.malloc(&cs.d_dec[i], CorrState::DEC_SLOT_BYTES) != HIP_SUCCESS ||
-            st.hip.hostMalloc((void**)&cs.h_yg[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
+        if (st.hip.hostMalloc((void**)&cs.h_yg[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
             st.hip.hostMalloc((void**)&cs.h_yu[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
             st.hip.hostMalloc((void**)&cs.h_y2[i], 8u * 5120u * sizeof(float), 0u) != HIP_SUCCESS ||
             st.hip.eventCreate(&cs.ev_dec_start[i]) != HIP_SUCCESS ||
@@ -2244,7 +2257,7 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
     if (out_info) {
         out_info[0] = (int64_t)used;
         out_info[1] = (int64_t)(vram_after >> 20);
-        out_info[2] = (int64_t)cs.h2d_bytes_total;
+        out_info[2] = (int64_t)cs.pinned_host_bytes;
         out_info[3] = (int64_t)dev_cnt;
     }
     cs.open = true;
@@ -2268,31 +2281,41 @@ extern "C" __declspec(dllexport) void hv41c_corr_hs_wait(int hs) {
 }
 
 extern "C" __declspec(dllexport) int hv41c_corr_load_gc(
-    int hs, int dev_slot, const uint8_t** ptrs, const uint64_t* sizes, uint64_t total_bytes)
+    int dev_slot, int hs, const uint8_t** ptrs, const uint64_t* sizes, uint64_t total_bytes)
 {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open) return -1;
+    if (!cs.open) {
+        corr_set_err(cs, "load_gc not open");
+        return -1;
+    }
     std::lock_guard<std::mutex> lock(cs.mu);
-    if (hs < 0 || hs >= cs.hs_cnt || dev_slot < 0 || dev_slot >= cs.dev_cnt || !ptrs || !sizes) return -1;
+    if (dev_slot < 0 || dev_slot >= cs.dev_cnt || hs < 0 || hs >= cs.hs_cnt || !ptrs || !sizes) {
+        corr_set_err(cs, "load_gc bad args dev=%d/%d hs=%d/%d", dev_slot, cs.dev_cnt, hs, cs.hs_cnt);
+        return -1;
+    }
 
     uint64_t pl_total = sizes[0] + sizes[1] + sizes[2];
     if (pl_total + total_bytes > cs.dev_bytes || total_bytes > cs.hs_bytes) {
         corr_set_err(cs, "load_gc overflow");
         return -3;
     }
+    if (cs.dev_stage_pending[dev_slot]) {
+        st.hip.eventSynchronize(cs.ev_dev_h2d[dev_slot]);
+        cs.dev_stage_pending[dev_slot] = false;
+    }
     if (cs.hs_pending[hs]) {
         st.hip.eventSynchronize(cs.ev_hs[hs]);
         cs.hs_pending[hs] = false;
     }
 
-    uint8_t* stg = static_cast<uint8_t*>(cs.host_stage[hs]);
+    uint8_t* stg = static_cast<uint8_t*>(cs.host_stage[dev_slot]);
     memcpy(stg, ptrs[0], (size_t)sizes[0]);
     memcpy(stg + sizes[0], ptrs[1], (size_t)sizes[1]);
     memcpy(stg + sizes[0] + sizes[1], ptrs[2], (size_t)sizes[2]);
 
-    if (cs.dev_pending[dev_slot]) {
-        st.hip.streamWaitEvent(cs.h2d_stream, cs.ev_dev[dev_slot], 0u);
+    if (cs.dev_comp_pending[dev_slot]) {
+        st.hip.streamWaitEvent(cs.h2d_stream, cs.ev_dev_comp[dev_slot], 0u);
     }
     uint8_t* dst = static_cast<uint8_t*>(cs.dev_slots[dev_slot]);
     if (st.hip.memcpyAsync(dst, stg, (size_t)pl_total, HIP_MEMCPY_HOST_TO_DEVICE, cs.h2d_stream) != HIP_SUCCESS ||
@@ -2300,49 +2323,56 @@ extern "C" __declspec(dllexport) int hv41c_corr_load_gc(
         corr_set_err(cs, "load_gc H2D failed");
         return -1;
     }
+    st.hip.eventRecord(cs.ev_dev_h2d[dev_slot], cs.h2d_stream);
+    cs.dev_stage_pending[dev_slot] = true;
     st.hip.eventRecord(cs.ev_hs[hs], cs.h2d_stream);
     cs.hs_pending[hs] = true;
-    st.hip.eventRecord(cs.ev_dev[dev_slot], cs.h2d_stream);
-    cs.dev_pending[dev_slot] = true;
     cs.h2d_bytes_total += pl_total + total_bytes;
     return 0;
 }
 
 extern "C" __declspec(dllexport) int hv41c_corr_load_fp4(
-    int hs, const uint8_t** ptrs, const uint64_t* sizes)
+    int dev_slot, const uint8_t** ptrs, const uint64_t* sizes)
 {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open) return -1;
+    if (!cs.open) {
+        corr_set_err(cs, "load_fp4 not open");
+        return -1;
+    }
     std::lock_guard<std::mutex> lock(cs.mu);
-    if (hs < 0 || hs >= cs.hs_cnt || !ptrs || !sizes) return -1;
+    if (dev_slot < 0 || dev_slot >= cs.dev_cnt || !ptrs || !sizes) {
+        corr_set_err(cs, "load_fp4 bad args dev=%d/%d", dev_slot, cs.dev_cnt);
+        return -1;
+    }
 
     uint64_t off = 0;
     for (int i = 0; i < 6; ++i) {
-        cs.fp4_off[hs][i] = off;
-        cs.fp4_sz[hs][i] = sizes[i];
+        cs.fp4_off[dev_slot][i] = off;
+        cs.fp4_sz[dev_slot][i] = sizes[i];
         off += (sizes[i] + 15ull) & ~15ull;
     }
-    if (off > cs.dev_bytes || off > cs.hs_bytes) {
+    if (off > cs.dev_bytes) {
         corr_set_err(cs, "load_fp4 overflow");
         return -3;
     }
-    if (cs.hs_pending[hs]) {
-        st.hip.eventSynchronize(cs.ev_hs[hs]);
-        cs.hs_pending[hs] = false;
+    if (cs.dev_stage_pending[dev_slot]) {
+        st.hip.eventSynchronize(cs.ev_dev_h2d[dev_slot]);
+        cs.dev_stage_pending[dev_slot] = false;
     }
-    uint8_t* hbuf = static_cast<uint8_t*>(cs.host_slots[hs]);
+    uint8_t* hbuf = static_cast<uint8_t*>(cs.host_stage[dev_slot]);
     for (int i = 0; i < 6; ++i) {
-        memcpy(hbuf + cs.fp4_off[hs][i], ptrs[i], (size_t)sizes[i]);
+        memcpy(hbuf + cs.fp4_off[dev_slot][i], ptrs[i], (size_t)sizes[i]);
     }
-    if (st.hip.memcpyAsync(cs.dev_slots[hs], hbuf, (size_t)off, HIP_MEMCPY_HOST_TO_DEVICE, cs.h2d_stream) != HIP_SUCCESS) {
+    if (cs.dev_comp_pending[dev_slot]) {
+        st.hip.streamWaitEvent(cs.h2d_stream, cs.ev_dev_comp[dev_slot], 0u);
+    }
+    if (st.hip.memcpyAsync(cs.dev_slots[dev_slot], hbuf, (size_t)off, HIP_MEMCPY_HOST_TO_DEVICE, cs.h2d_stream) != HIP_SUCCESS) {
         corr_set_err(cs, "load_fp4 H2D failed");
         return -1;
     }
-    st.hip.eventRecord(cs.ev_hs[hs], cs.h2d_stream);
-    cs.hs_pending[hs] = true;
-    st.hip.eventRecord(cs.ev_dev[hs], cs.h2d_stream);
-    cs.dev_pending[hs] = true;
+    st.hip.eventRecord(cs.ev_dev_h2d[dev_slot], cs.h2d_stream);
+    cs.dev_stage_pending[dev_slot] = true;
     cs.h2d_bytes_total += off;
     return 0;
 }
@@ -2352,13 +2382,19 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode(
 {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open) return -1;
+    if (!cs.open) {
+        corr_set_err(cs, "corr_decode not open");
+        return -1;
+    }
     std::lock_guard<std::mutex> lock(cs.mu);
-    if (dev_slot < 0 || dev_slot >= cs.dev_cnt || ring_slot < 0 || ring_slot >= CorrState::MAX_RING ||
-        ev_slot < 0 || ev_slot >= CorrState::MAX_RING || !mats) return -1;
+    if (dev_slot < 0 || dev_slot >= cs.dev_cnt || ring_slot < 0 || ring_slot >= CorrState::DEC_SLOTS ||
+        ev_slot < 0 || ev_slot >= CorrState::MAX_RING || !mats) {
+        corr_set_err(cs, "corr_decode bad args dev=%d dec=%d ev=%d", dev_slot, ring_slot, ev_slot);
+        return -1;
+    }
 
-    if (cs.dev_pending[dev_slot]) {
-        st.hip.streamWaitEvent(cs.comp_stream, cs.ev_dev[dev_slot], 0u);
+    if (cs.dev_stage_pending[dev_slot]) {
+        st.hip.streamWaitEvent(cs.comp_stream, cs.ev_dev_h2d[dev_slot], 0u);
     }
     st.hip.eventRecord(cs.ev_dec_start[ev_slot], cs.comp_stream);
 
@@ -2386,10 +2422,14 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode(
     }
 
     st.hip.eventRecord(cs.ev_dec_end[ev_slot], cs.comp_stream);
-    st.hip.eventRecord(cs.ev_dev[dev_slot], cs.comp_stream);
-    cs.dev_pending[dev_slot] = true;
+    st.hip.eventRecord(cs.ev_dev_comp[dev_slot], cs.comp_stream);
+    cs.dev_comp_pending[dev_slot] = true;
     cs.dec_timed[ev_slot] = true;
-    return (st.hip.streamSynchronize(cs.comp_stream) == HIP_SUCCESS) ? 0 : -1;
+    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
+        corr_set_err(cs, "corr_decode sync failed");
+        return -1;
+    }
+    return 0;
 }
 
 extern "C" __declspec(dllexport) int hv41c_corr_decode_fp4(
@@ -2397,13 +2437,19 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode_fp4(
 {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open) return -1;
+    if (!cs.open) {
+        corr_set_err(cs, "decode_fp4 not open");
+        return -1;
+    }
     std::lock_guard<std::mutex> lock(cs.mu);
-    if (dev_slot < 0 || dev_slot >= cs.hs_cnt || ring_slot < 0 || ring_slot >= CorrState::MAX_RING ||
-        ev_slot < 0 || ev_slot >= CorrState::MAX_RING) return -1;
+    if (dev_slot < 0 || dev_slot >= cs.dev_cnt || ring_slot < 0 || ring_slot >= CorrState::DEC_SLOTS ||
+        ev_slot < 0 || ev_slot >= CorrState::MAX_RING) {
+        corr_set_err(cs, "decode_fp4 bad args dev=%d dec=%d ev=%d", dev_slot, ring_slot, ev_slot);
+        return -1;
+    }
 
-    if (cs.dev_pending[dev_slot]) {
-        st.hip.streamWaitEvent(cs.comp_stream, cs.ev_dev[dev_slot], 0u);
+    if (cs.dev_stage_pending[dev_slot]) {
+        st.hip.streamWaitEvent(cs.comp_stream, cs.ev_dev_h2d[dev_slot], 0u);
     }
     st.hip.eventRecord(cs.ev_dec_start[ev_slot], cs.comp_stream);
 
@@ -2419,10 +2465,14 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode_fp4(
     }
 
     st.hip.eventRecord(cs.ev_dec_end[ev_slot], cs.comp_stream);
-    st.hip.eventRecord(cs.ev_dev[dev_slot], cs.comp_stream);
-    cs.dev_pending[dev_slot] = true;
+    st.hip.eventRecord(cs.ev_dev_comp[dev_slot], cs.comp_stream);
+    cs.dev_comp_pending[dev_slot] = true;
     cs.dec_timed[ev_slot] = true;
-    return (st.hip.streamSynchronize(cs.comp_stream) == HIP_SUCCESS) ? 0 : -1;
+    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
+        corr_set_err(cs, "decode_fp4 sync failed");
+        return -1;
+    }
+    return 0;
 }
 
 extern "C" __declspec(dllexport) int hv41c_corr_w13(
@@ -2430,18 +2480,25 @@ extern "C" __declspec(dllexport) int hv41c_corr_w13(
 {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open || M < 1 || M > 8 || dec_slot < 0 || dec_slot >= CorrState::MAX_RING ||
-        out_slot < 0 || out_slot >= CorrState::MAX_RING || !av || !sv || !bad) return -1;
+    if (!cs.open || M < 1 || M > 8 || dec_slot < 0 || dec_slot >= CorrState::DEC_SLOTS ||
+        out_slot < 0 || out_slot >= CorrState::MAX_RING || !av || !sv || !bad) {
+        corr_set_err(cs, "corr_w13 bad args dec=%d out=%d M=%d", dec_slot, out_slot, M);
+        return -1;
+    }
     std::lock_guard<std::mutex> lock(cs.mu);
 
     st.hip.eventRecord(cs.ev_w13_start[out_slot], cs.comp_stream);
     if (corr_launch_fp4(st, cs, dec_slot, 0, av, sv, bad, M, 2304, 5120, cs.h_yg[out_slot]) != 0 ||
-        corr_launch_fp4(st, cs, dec_slot, 1, av, sv, bad, M, 2304, 5120, cs.h_yu[out_slot]) != 0) {
+        corr_launch_fp4(st, cs, dec_slot, 2, av, sv, bad, M, 2304, 5120, cs.h_yu[out_slot]) != 0) {
         return -1;
     }
     st.hip.eventRecord(cs.ev_w13_end[out_slot], cs.comp_stream);
     cs.w13_timed[out_slot] = true;
-    return (st.hip.streamSynchronize(cs.comp_stream) == HIP_SUCCESS) ? 0 : -1;
+    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
+        corr_set_err(cs, "corr_w13 sync failed");
+        return -1;
+    }
+    return 0;
 }
 
 extern "C" __declspec(dllexport) int hv41c_corr_w2(
@@ -2449,17 +2506,24 @@ extern "C" __declspec(dllexport) int hv41c_corr_w2(
 {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open || M < 1 || M > 8 || dec_slot < 0 || dec_slot >= CorrState::MAX_RING ||
-        out_slot < 0 || out_slot >= CorrState::MAX_RING || !av || !sv || !bad) return -1;
+    if (!cs.open || M < 1 || M > 8 || dec_slot < 0 || dec_slot >= CorrState::DEC_SLOTS ||
+        out_slot < 0 || out_slot >= CorrState::MAX_RING || !av || !sv || !bad) {
+        corr_set_err(cs, "corr_w2 bad args dec=%d out=%d M=%d", dec_slot, out_slot, M);
+        return -1;
+    }
     std::lock_guard<std::mutex> lock(cs.mu);
 
     st.hip.eventRecord(cs.ev_w2_start[out_slot], cs.comp_stream);
-    if (corr_launch_fp4(st, cs, dec_slot, 2, av, sv, bad, M, 5120, 2304, cs.h_y2[out_slot]) != 0) {
+    if (corr_launch_fp4(st, cs, dec_slot, 1, av, sv, bad, M, 5120, 2304, cs.h_y2[out_slot]) != 0) {
         return -1;
     }
     st.hip.eventRecord(cs.ev_w2_end[out_slot], cs.comp_stream);
     cs.w2_timed[out_slot] = true;
-    return (st.hip.streamSynchronize(cs.comp_stream) == HIP_SUCCESS) ? 0 : -1;
+    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
+        corr_set_err(cs, "corr_w2 sync failed");
+        return -1;
+    }
+    return 0;
 }
 
 extern "C" __declspec(dllexport) int hv41c_corr_wait13(int out_slot) {
@@ -2506,7 +2570,10 @@ extern "C" __declspec(dllexport) int hv41c_corr_sync() {
 extern "C" __declspec(dllexport) int hv41c_corr_read_decoded(int ring_slot, uint8_t* dst) {
     State& st = state();
     CorrState& cs = corr_state();
-    if (!cs.open || ring_slot < 0 || ring_slot >= CorrState::MAX_RING || !dst) return -1;
+    if (!cs.open || ring_slot < 0 || ring_slot >= CorrState::DEC_SLOTS || !dst) {
+        corr_set_err(cs, "read_decoded bad args dec=%d", ring_slot);
+        return -1;
+    }
     if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) return -1;
     return (st.hip.memcpy(dst, cs.d_dec[ring_slot], CorrState::DEC_SLOT_BYTES, HIP_MEMCPY_DEVICE_TO_HOST) == HIP_SUCCESS) ? 0 : -1;
 }
