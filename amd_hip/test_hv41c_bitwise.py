@@ -298,6 +298,8 @@ class DirectHipHv41c:
             ck(c.amd_comgr_create_action_info(ctypes.byref(info)), "reinit_action_info")
             ck(c.amd_comgr_action_info_set_isa_name(info.value, isa_name), "set_isa_name(codegen)")
             c.amd_comgr_action_info_set_logging(info.value, True)
+            cg_opts = (ctypes.c_char_p * 2)(b"-O3", b"-mcumode")
+            ck(c.amd_comgr_action_info_set_option_list(info.value, cg_opts, 2), "set_option_list(codegen)")
 
             ck(c.amd_comgr_create_data_set(ctypes.byref(reloc_set)), "create_data_set(reloc)")
             ck(c.amd_comgr_do_action(self.AMD_COMGR_ACTION_CODEGEN_BC_TO_RELOCATABLE, info.value, bc_set.value, reloc_set.value), "CODEGEN_BC_TO_RELOCATABLE", reloc_set.value)
@@ -1365,7 +1367,7 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
             ctypes.addressof(vN), ctypes.addressof(vK), ctypes.addressof(vzs),
             ctypes.addressof(d_oc), ctypes.addressof(d_os),
         )
-        assert h_hip.hipModuleLaunchKernel(dll.fn_plane_restore, (G_n + 63) // 64, 1, 1, 64, 1, 1, 0, dll.stream, args_pr, None) == 0
+        assert h_hip.hipModuleLaunchKernel(dll.fn_plane_restore, G_n, 1, 1, 256, 1, 1, 0, dll.stream, args_pr, None) == 0
         gpu_codes = np.empty_like(ref_codes)
         gpu_scales = np.empty_like(ref_scales)
         assert h_hip.hipMemcpy(gpu_codes.ctypes.data_as(ctypes.c_void_p), d_oc, ref_codes.nbytes, dll.HIP_MEMCPY_DEVICE_TO_HOST) == 0
@@ -1555,6 +1557,109 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
         print(f"  corr_abi fp4 w13+w2 M={M_c} ({sum(a.nbytes for a in fp4_arrs)} B): outputs={n_fp4}, mismatches={bad_fp4}")
         total_out += n_fp4
         total_bad += bad_fp4
+
+        # Async pipelined overlap stress test across 2 concurrent experts (slots 0/8 and 1/9)
+        dll.hv41c_corr_take_times.argtypes = [ctypes.POINTER(ctypes.c_double)]
+        dll.hv41c_corr_take_times.restype = None
+
+        pl_bufs_b, b2_bufs_b, p1s_b, pidxs_b = [], [], [], []
+        for N_c, K_c in shapes:
+            G_n, K_blk = N_c >> 3, K_c >> 5
+            G_tot = G_n * K_blk
+            p0_b = rng.integers(0, 256, size=(G_tot, 64), dtype=np.uint8)
+            p1_b = rng.integers(0, 256, size=(G_tot, 64), dtype=np.uint8)
+            tbl_b = rng.integers(0, 256, size=(G_tot, 19), dtype=np.uint8)
+            pidx_b = np.arange(G_n + 1, dtype=np.uint32) * np.uint32(1024)
+            pbytes_b = rng.integers(0, 256, size=(G_n + 2) * 256, dtype=np.uint8)
+            hdr_b = np.zeros(256, dtype=np.uint8)
+            pl_b = np.concatenate([hdr_b, p1_b.reshape(-1), pidx_b.view(np.uint8), pbytes_b])
+            b2_b = np.concatenate([p0_b.reshape(-1), tbl_b.reshape(-1)])
+            pl_bufs_b.append(pl_b); b2_bufs_b.append(b2_b)
+            p1s_b.append(p1_b); pidxs_b.append(pidx_b)
+        b2_cat_b = np.concatenate(b2_bufs_b)
+        mats_b = (GcMat * 3)()
+        b2_cur_b = sum(x.nbytes for x in pl_bufs_b)
+        pl_cur_b = 0
+        for i, (N_c, K_c) in enumerate(shapes):
+            mats_b[i] = GcMat(N_c, K_c, b2_cur_b, pl_cur_b, 256, 256 + p1s_b[i].nbytes, 256 + p1s_b[i].nbytes + pidxs_b[i].nbytes, 1)
+            b2_cur_b += b2_bufs_b[i].nbytes
+            pl_cur_b += pl_bufs_b[i].nbytes
+
+        av_13_b = rng.integers(-50000, 50001, size=(M_c, 5120), dtype=np.int32)
+        sv_13_b = rng.uniform(0.5, 1.5, size=(M_c, 160)).astype(np.float32)
+        bad_13_b = np.array([0, 0], dtype=np.uint8)
+        av_2_b = rng.integers(-50000, 50001, size=(M_c, 2304), dtype=np.int32)
+        sv_2_b = rng.uniform(0.5, 1.5, size=(M_c, 72)).astype(np.float32)
+        bad_2_b = np.array([1, 0], dtype=np.uint8)
+
+        times_flush = (ctypes.c_double * 3)()
+        dll.hv41c_corr_take_times(times_flush)
+
+        h_ptr_a = dll.hv41c_corr_host(0)
+        assert h_ptr_a
+        dll.hv41c_corr_hs_wait(0)
+        ctypes.memmove(h_ptr_a, b2_cat.ctypes.data, b2_cat.nbytes)
+        assert dll.hv41c_corr_load_gc(0, 0, ptrs_arr, sizes_arr, b2_cat.nbytes) == 0
+        assert dll.hv41c_corr_decode(0, 0, mats, 8) == 0
+        assert dll.hv41c_corr_w13(0, 8, av_13.ctypes.data, sv_13.ctypes.data, bad_13.ctypes.data, M_c) == 0
+
+        h_ptr_b = dll.hv41c_corr_host(1)
+        assert h_ptr_b
+        dll.hv41c_corr_hs_wait(1)
+        ctypes.memmove(h_ptr_b, b2_cat_b.ctypes.data, b2_cat_b.nbytes)
+        ptrs_arr_b = (ctypes.c_void_p * 3)(pl_bufs_b[0].ctypes.data, pl_bufs_b[1].ctypes.data, pl_bufs_b[2].ctypes.data)
+        sizes_arr_b = (ctypes.c_uint64 * 3)(pl_bufs_b[0].nbytes, pl_bufs_b[1].nbytes, pl_bufs_b[2].nbytes)
+        assert dll.hv41c_corr_load_gc(1, 1, ptrs_arr_b, sizes_arr_b, b2_cat_b.nbytes) == 0
+        assert dll.hv41c_corr_decode(1, 1, mats_b, 9) == 0
+        assert dll.hv41c_corr_w13(1, 9, av_13_b.ctypes.data, sv_13_b.ctypes.data, bad_13_b.ctypes.data, M_c) == 0
+
+        assert dll.hv41c_corr_wait13(8) == 0
+        assert dll.hv41c_corr_wait13(9) == 0
+        yg_ov_a = np.ctypeslib.as_array(dll.hv41c_corr_yg(8), shape=(M_c, 2304)).copy()
+        yu_ov_a = np.ctypeslib.as_array(dll.hv41c_corr_yu(8), shape=(M_c, 2304)).copy()
+        yg_ov_b = np.ctypeslib.as_array(dll.hv41c_corr_yg(9), shape=(M_c, 2304)).copy()
+        yu_ov_b = np.ctypeslib.as_array(dll.hv41c_corr_yu(9), shape=(M_c, 2304)).copy()
+
+        assert dll.hv41c_corr_w2(0, 8, av_2.ctypes.data, sv_2.ctypes.data, bad_2.ctypes.data, M_c) == 0
+        assert dll.hv41c_corr_w2(1, 9, av_2_b.ctypes.data, sv_2_b.ctypes.data, bad_2_b.ctypes.data, M_c) == 0
+        assert dll.hv41c_corr_wait2(8) == 0
+        assert dll.hv41c_corr_wait2(9) == 0
+        y2_ov_a = np.ctypeslib.as_array(dll.hv41c_corr_y2(8), shape=(M_c, 5120)).copy()
+        y2_ov_b = np.ctypeslib.as_array(dll.hv41c_corr_y2(9), shape=(M_c, 5120)).copy()
+
+        dec_host_b = np.empty(0x11EE000, dtype=np.uint8)
+        assert dll.hv41c_corr_read_decoded(1, dec_host_b.ctypes.data) == 0
+        c_w1_b = np.ascontiguousarray(dec_host_b[0 : 0x5A0000].reshape(2304, 2560))
+        s_w1_b = np.ascontiguousarray(dec_host_b[0x5A0000 : 0x5FA000].reshape(2304, 160))
+        c_w2_b = np.ascontiguousarray(dec_host_b[0x5FA000 : 0x5FA000 + 0x5A0000].reshape(5120, 1152))
+        s_w2_b = np.ascontiguousarray(dec_host_b[0x5FA000 + 0x5A0000 : 0xBF4000].reshape(5120, 72))
+        c_w3_b = np.ascontiguousarray(dec_host_b[0xBF4000 : 0xBF4000 + 0x5A0000].reshape(2304, 2560))
+        s_w3_b = np.ascontiguousarray(dec_host_b[0xBF4000 + 0x5A0000 : 0x11EE000].reshape(2304, 160))
+
+        ref_yg_b = _cpu_dot8(c_w1_b, s_w1_b, av_13_b, sv_13_b, bad_13_b, 2304, 5120)
+        ref_yu_b = _cpu_dot8(c_w3_b, s_w3_b, av_13_b, sv_13_b, bad_13_b, 2304, 5120)
+        ref_y2_b = _cpu_dot8(c_w2_b, s_w2_b, av_2_b, sv_2_b, bad_2_b, 5120, 2304)
+
+        bad_ov = (
+            int(np.count_nonzero(yg_ov_a.view(np.uint32) != ref_yg.view(np.uint32)))
+            + int(np.count_nonzero(yu_ov_a.view(np.uint32) != ref_yu.view(np.uint32)))
+            + int(np.count_nonzero(y2_ov_a.view(np.uint32) != ref_y2.view(np.uint32)))
+            + int(np.count_nonzero(yg_ov_b.view(np.uint32) != ref_yg_b.view(np.uint32)))
+            + int(np.count_nonzero(yu_ov_b.view(np.uint32) != ref_yu_b.view(np.uint32)))
+            + int(np.count_nonzero(y2_ov_b.view(np.uint32) != ref_y2_b.view(np.uint32)))
+        )
+        times_ov = (ctypes.c_double * 3)()
+        dll.hv41c_corr_take_times(times_ov)
+        assert times_ov[0] > 0.0 and times_ov[1] > 0.0 and times_ov[2] > 0.0, (
+            f"expected positive take_times after async overlap, got {list(times_ov)}"
+        )
+        n_ov = 2 * n_corr
+        print(
+            f"  corr_abi async overlap 2-expert (slots 0/8 + 1/9): outputs={n_ov}, "
+            f"mismatches={bad_ov}, take_times_ms={[round(float(x), 3) for x in times_ov]}"
+        )
+        total_out += n_ov
+        total_bad += bad_ov
 
     return total_out, total_bad
 

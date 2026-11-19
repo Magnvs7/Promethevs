@@ -186,6 +186,10 @@ typedef struct __attribute__((aligned(16))) {
     int x, y, z, w;
 } i4_t;
 
+typedef struct __attribute__((aligned(16))) {
+    unsigned int x, y, z, w;
+} u4_t;
+
 __device__ static __inline__ int decode_e4m3_x512(unsigned int b) {
     int sign = (int)((b >> 7) & 1u);
     int exp  = (int)((b >> 3) & 0xFu);
@@ -292,6 +296,103 @@ extern "C" __global__ void hv41_fp8_linear_m1(
     out[n] = round_bf16_in_f32(acc);
 }
 
+// Multi-wave M=1 kernel: WAVES wave32s per 32-col workgroup share LDS activation/scale-free
+// 256-entry E4M3 LUT and 32x32 float term buffer, summing exact K-blocks sequentially on wave 0.
+template<int WAVES>
+__device__ static __inline__ void fp8_m1_mw_lut_impl(
+    const unsigned int* __restrict__ packed_codes,
+    const signed char*  __restrict__ scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    float*              __restrict__ out,
+    int N,
+    int K)
+{
+    int nb   = (int)__builtin_amdgcn_workgroup_id_x();
+    int tid  = (int)__builtin_amdgcn_workitem_id_x();
+    int lane = tid & 31;
+    int wy   = tid >> 5;
+    int nnb  = N >> 5;
+    if (nb >= nnb) return;
+
+    __attribute__((shared)) static float s_term[32][32];
+    __attribute__((shared)) static int   s_lut[256];
+
+    for (int i = tid; i < 256; i += (WAVES * 32)) {
+        s_lut[i] = decode_e4m3_x512((unsigned int)i);
+    }
+    __builtin_amdgcn_s_barrier();
+
+    int n = (nb << 5) + lane;
+    int nkb = K >> 5;
+    const unsigned int* w_tile = packed_codes + ((unsigned long long)nb * (unsigned long long)nkb << 8);
+    const signed char*  w_sc   = scales + (unsigned long long)nb * (unsigned long long)nkb;
+    const i4_t*         a_vec  = (const i4_t*)a;
+
+    float acc = 0.0f;
+    for (int kb0 = 0; kb0 < nkb; kb0 += 32) {
+        int rem = nkb - kb0;
+        int cnt = (rem < 32) ? rem : 32;
+        for (int t = wy; t < cnt; t += WAVES) {
+            int kb = kb0 + t;
+            const unsigned int* blk = w_tile + ((unsigned long long)kb << 8);
+            const i4_t*         ak  = a_vec + (kb << 3);
+            long long dot = 0ll;
+
+            #pragma unroll 8
+            for (int grp = 0; grp < 8; ++grp) {
+                unsigned int w4 = blk[(grp << 5) + lane];
+                i4_t av = ak[grp];
+                int w0 = s_lut[w4 & 0xFFu];
+                int w1 = s_lut[(w4 >> 8) & 0xFFu];
+                int w2 = s_lut[(w4 >> 16) & 0xFFu];
+                int w3 = s_lut[(w4 >> 24) & 0xFFu];
+                dot += (long long)w0 * (long long)av.x
+                     + (long long)w1 * (long long)av.y
+                     + (long long)w2 * (long long)av.z
+                     + (long long)w3 * (long long)av.w;
+            }
+
+            float bval = dot_to_scaled_f32(dot, (int)w_sc[kb]);
+            s_term[t][lane] = bval * s[kb];
+        }
+        __builtin_amdgcn_s_barrier();
+        if (wy == 0) {
+            for (int t = 0; t < cnt; ++t) {
+                acc = s_term[t][lane] + acc;
+            }
+        }
+        __builtin_amdgcn_s_barrier();
+    }
+    if (wy == 0) {
+        out[n] = round_bf16_in_f32(acc);
+    }
+}
+
+extern "C" __global__ void hv41_fp8_linear_m1_w8(
+    const unsigned int* __restrict__ packed_codes,
+    const signed char*  __restrict__ scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    float*              __restrict__ out,
+    int N,
+    int K)
+{
+    fp8_m1_mw_lut_impl<8>(packed_codes, scales, a, s, out, N, K);
+}
+
+extern "C" __global__ void hv41_fp8_linear_m1_w16(
+    const unsigned int* __restrict__ packed_codes,
+    const signed char*  __restrict__ scales,
+    const int*          __restrict__ a,
+    const float*        __restrict__ s,
+    float*              __restrict__ out,
+    int N,
+    int K)
+{
+    fp8_m1_mw_lut_impl<16>(packed_codes, scales, a, s, out, N, K);
+}
+
 // Multi-row kernel: processes up to 4 rows per workgroup.y slice (1 wave32/workgroup) with zero shuffles.
 extern "C" __global__ void hv41_fp8_linear_tile4(
     const unsigned int* __restrict__ packed_codes,
@@ -307,6 +408,13 @@ extern "C" __global__ void hv41_fp8_linear_tile4(
     int lane = (int)__builtin_amdgcn_workitem_id_x();
     int nnb  = N >> 5;
     if (nb >= nnb) return;
+
+    __attribute__((shared)) static int s_lut[256];
+    #pragma unroll 8
+    for (int i = 0; i < 8; ++i) {
+        s_lut[lane + i * 32] = decode_e4m3_x512((unsigned int)(lane + i * 32));
+    }
+    __builtin_amdgcn_s_barrier();
 
     int r0 = (int)(__builtin_amdgcn_workgroup_id_y() * 4u);
     int r_cnt = rows - r0;
@@ -353,10 +461,10 @@ extern "C" __global__ void hv41_fp8_linear_tile4(
         #pragma unroll 8
         for (int grp = 0; grp < 8; ++grp) {
             unsigned int w4 = blk[(grp << 5) + lane];
-            long long w0 = (long long)decode_e4m3_x512(w4 & 0xFFu);
-            long long w1 = (long long)decode_e4m3_x512((w4 >> 8) & 0xFFu);
-            long long w2 = (long long)decode_e4m3_x512((w4 >> 16) & 0xFFu);
-            long long w3 = (long long)decode_e4m3_x512((w4 >> 24) & 0xFFu);
+            long long w0 = (long long)s_lut[w4 & 0xFFu];
+            long long w1 = (long long)s_lut[(w4 >> 8) & 0xFFu];
+            long long w2 = (long long)s_lut[(w4 >> 16) & 0xFFu];
+            long long w3 = (long long)s_lut[(w4 >> 24) & 0xFFu];
 
             i4_t v0 = ak0[grp];
             dot0 += w0 * (long long)v0.x + w1 * (long long)v0.y + w2 * (long long)v0.z + w3 * (long long)v0.w;
@@ -523,6 +631,8 @@ extern "C" __global__ void hv41_sattn_kernel(
     const int* idx_ptr = idx + (unsigned long long)m * (unsigned long long)topk;
     float* o_ptr = O + ((unsigned long long)m * (unsigned long long)H + (unsigned long long)h) * (unsigned long long)d;
 
+    __attribute__((shared)) static float s_q[512];
+    __attribute__((shared)) static int   s_tok[64];
     __attribute__((shared)) static float s_scores[64];
     __attribute__((shared)) static float s_p[64];
     __attribute__((shared)) static float s_red[64];
@@ -533,6 +643,12 @@ extern "C" __global__ void hv41_sattn_kernel(
     float o_acc[8];
     for (int i = 0; i < 8; ++i) o_acc[i] = 0.0f;
 
+    for (int i = 0; i < 8; ++i) {
+        int j = tid + i * 64;
+        if (j < d) {
+            s_q[j] = q_ptr[j];
+        }
+    }
     if (tid == 0) {
         s_m = -1e30f;
         s_l = 0.0f;
@@ -546,13 +662,14 @@ extern "C" __global__ void hv41_sattn_kernel(
         // 1. Compute score[tid] for t = c0 + tid
         if (tid < c_len) {
             int tok = idx_ptr[c0 + tid];
+            s_tok[tid] = tok;
             if (tok < 0 || tok >= kv_len) {
                 s_scores[tid] = uint_as_f32(0xFF800000u); // -inf
             } else {
                 const float* k_row = K + (unsigned long long)tok * (unsigned long long)d;
                 float dot = 0.0f;
                 for (int k = 0; k < d; ++k) {
-                    dot += q_ptr[k] * k_row[k];
+                    dot += s_q[k] * k_row[k];
                 }
                 s_scores[tid] = dot * scale;
             }
@@ -594,7 +711,7 @@ extern "C" __global__ void hv41_sattn_kernel(
             if (j < d) {
                 float acc = alpha * o_acc[i];
                 for (int t = 0; t < c_len; ++t) {
-                    int tok = idx_ptr[c0 + t];
+                    int tok = s_tok[t];
                     if (tok >= 0 && tok < kv_len) {
                         acc += s_p[t] * V[(unsigned long long)tok * (unsigned long long)d + (unsigned long long)j];
                     }
@@ -729,12 +846,10 @@ __device__ static __inline__ unsigned int corr_read_bits(
 {
     unsigned long long byte_idx = bit_pos >> 3;
     unsigned int sh = (unsigned int)(bit_pos & 7ull);
-    unsigned long long w = 0;
-    for (int i = 0; i < 4; ++i) {
-        w |= ((unsigned long long)bytes[byte_idx + (unsigned long long)i]) << (i * 8);
-    }
+    unsigned int w = (unsigned int)bytes[byte_idx]
+                   | ((unsigned int)bytes[byte_idx + 1ull] << 8);
     unsigned int mask = (nbits == 4) ? 0xFu : 0x1u;
-    return (unsigned int)((w >> sh) & (unsigned long long)mask);
+    return (w >> sh) & mask;
 }
 
 extern "C" __global__ void hv41_plane_restore_kernel(
@@ -749,80 +864,105 @@ extern "C" __global__ void hv41_plane_restore_kernel(
     unsigned char* __restrict__ out_codes,
     unsigned char* __restrict__ out_scales)
 {
-    int g = (int)__builtin_amdgcn_workgroup_id_x() * 64 + (int)__builtin_amdgcn_workitem_id_x();
+    int g   = (int)__builtin_amdgcn_workgroup_id_x();
+    int tid = (int)__builtin_amdgcn_workitem_id_x(); // 0..255
     int G_n = N >> 3;
     if (g >= G_n) return;
     int K_blk = K >> 5;
+    int total_rows = K_blk << 3;
     long long G_tot = (long long)G_n * (long long)K_blk;
 
-    const unsigned char* p0 = field + (long long)g * K_blk * 64ll;
-    const unsigned char* p1 = plane1 + (long long)g * K_blk * 64ll;
-    const unsigned char* tbl = field + G_tot * 64ll + (long long)g * K_blk * 19ll;
-    unsigned long long bit_pos = (unsigned long long)patch_idx[g];
+    const unsigned char* p0  = field  + (long long)g * K_blk * 64ll;
+    const unsigned char* p1  = plane1 + (long long)g * K_blk * 64ll;
+    const unsigned char* tbl = field  + G_tot * 64ll + (long long)g * K_blk * 19ll;
 
-    for (int kb = 0; kb < K_blk; ++kb) {
-        const unsigned char* t = tbl + (long long)kb * 19ll;
-        unsigned long long q0 = 0, q6 = 0;
-        for (int i = 0; i < 8; ++i) {
-            q0 |= ((unsigned long long)t[i]) << (i * 8);
-            q6 |= ((unsigned long long)t[6 + i]) << (i * 8);
-        }
-        int idx[8];
-        idx[0] = (int)(q0 & 0x7FFull);
-        idx[1] = (int)((q0 >> 11) & 0x7FFull);
-        idx[2] = (int)((q0 >> 22) & 0x7FFull);
-        idx[3] = (int)((q0 >> 33) & 0x7FFull);
-        idx[4] = (int)((q0 >> 44) & 0x7FFull);
-        idx[5] = (int)((q6 >> 7) & 0x7FFull);
-        idx[6] = (int)((q6 >> 18) & 0x7FFull);
-        idx[7] = (int)((q6 >> 29) & 0x7FFull);
+    __attribute__((shared)) static unsigned int s_scan[256];
+    __attribute__((shared)) static unsigned long long s_base_bit;
 
-        for (int r = 0; r < 8; ++r) {
+    if (tid == 0) {
+        s_base_bit = (unsigned long long)patch_idx[g];
+    }
+    __builtin_amdgcn_s_barrier();
+
+    for (int base = 0; base < total_rows; base += 256) {
+        int row_idx = base + tid;
+        unsigned int row_u32[4] = { 0u, 0u, 0u, 0u };
+        unsigned int mask4 = 0u, mask1 = 0u;
+        unsigned int my_bits = 0u;
+        int kb = row_idx >> 3;
+        int r  = row_idx & 7;
+
+        if (row_idx < total_rows) {
+            const unsigned char* t = tbl + (long long)kb * 19ll;
             out_scales[(long long)(g * 8 + r) * K_blk + kb] = t[11 + r];
+
+            int bit_off = r * 11;
+            int b_i = bit_off >> 3;
+            int b_s = bit_off & 7;
+            unsigned int idx_w = (unsigned int)t[b_i]
+                               | ((unsigned int)t[b_i + 1] << 8)
+                               | ((unsigned int)t[b_i + 2] << 16);
+            int lut_idx = (int)((idx_w >> b_s) & 0x7FFu);
+            const unsigned char* lut = lut32kb + (long long)lut_idx * 16ll;
+
+            int h = r >> 2;
+            int q = r & 3;
+            const unsigned char* p0_8 = p0 + (long long)kb * 64ll + h * 32 + q * 8;
+            const unsigned char* p1_8 = p1 + (long long)kb * 64ll + h * 32 + q * 8;
+
+            #pragma unroll 8
+            for (int i = 0; i < 8; ++i) {
+                unsigned int a0 = (unsigned int)p0_8[i];
+                unsigned int a1 = (unsigned int)p1_8[i];
+                unsigned int b_lo = ((a1 & 0x33u) << 2) | (a0 & 0x33u);
+                unsigned int b_hi = ((a0 >> 2) & 0x33u) | (a1 & 0xCCu);
+
+                unsigned int lo0 = b_lo & 0xFu;
+                unsigned int hi0 = (b_lo >> 4) & 0xFu;
+                unsigned int o_lo0 = lut[lo0];
+                unsigned int o_hi0 = lut[hi0];
+                row_u32[i >> 2] |= ((o_hi0 << 4) | o_lo0) << ((i & 3) * 8);
+                if (lo0 > 11u) mask4 |= (1u << i);
+                if (hi0 > 11u) mask4 |= (1u << (i + 16));
+                if (o_lo0 == 0u) mask1 |= (1u << i);
+                if (o_hi0 == 0u) mask1 |= (1u << (i + 16));
+
+                unsigned int lo1 = b_hi & 0xFu;
+                unsigned int hi1 = (b_hi >> 4) & 0xFu;
+                unsigned int o_lo1 = lut[lo1];
+                unsigned int o_hi1 = lut[hi1];
+                row_u32[(8 + i) >> 2] |= ((o_hi1 << 4) | o_lo1) << ((i & 3) * 8);
+                if (lo1 > 11u) mask4 |= (1u << (8 + i));
+                if (hi1 > 11u) mask4 |= (1u << (24 + i));
+                if (o_lo1 == 0u) mask1 |= (1u << (8 + i));
+                if (o_hi1 == 0u) mask1 |= (1u << (24 + i));
+            }
+            my_bits = (unsigned int)__builtin_popcount(mask4) * 4u
+                    + (zs ? (unsigned int)__builtin_popcount(mask1) : 0u);
         }
 
-        unsigned char raw_rows[8][16];
-        for (int h = 0; h < 2; ++h) {
-            const unsigned char* p0_32 = p0 + (long long)kb * 64ll + h * 32;
-            const unsigned char* p1_32 = p1 + (long long)kb * 64ll + h * 32;
-            unsigned char ym5[32], ym2[32];
-            for (int i = 0; i < 32; ++i) {
-                ym5[i] = (unsigned char)(((p1_32[i] & 0x33u) << 2) | (p0_32[i] & 0x33u));
-                ym2[i] = (unsigned char)(((p0_32[i] >> 2) & 0x33u) | (p1_32[i] & 0xCCu));
-            }
-            for (int q = 0; q < 4; ++q) {
-                int r = h * 4 + q;
-                for (int i = 0; i < 8; ++i) {
-                    raw_rows[r][i]     = ym5[q * 8 + i];
-                    raw_rows[r][8 + i] = ym2[q * 8 + i];
-                }
-            }
+        s_scan[tid] = my_bits;
+        __builtin_amdgcn_s_barrier();
+        #pragma unroll
+        for (int off = 1; off < 256; off <<= 1) {
+            unsigned int v = (tid >= off) ? s_scan[tid - off] : 0u;
+            __builtin_amdgcn_s_barrier();
+            s_scan[tid] += v;
+            __builtin_amdgcn_s_barrier();
         }
+        unsigned int excl = s_scan[tid] - my_bits;
+        unsigned long long bit_pos = s_base_bit + (unsigned long long)excl;
 
-        for (int r = 0; r < 8; ++r) {
-            const unsigned char* lut = lut32kb + (long long)idx[r] * 16ll;
-            unsigned char row[16];
-            unsigned int mask4 = 0u, mask1 = 0u;
-            for (int i = 0; i < 16; ++i) {
-                unsigned char b = raw_rows[r][i];
-                unsigned int lo = (unsigned int)(b & 0xFu);
-                unsigned int hi = (unsigned int)((b >> 4) & 0xFu);
-                unsigned char out_lo = lut[lo];
-                unsigned char out_hi = lut[hi];
-                row[i] = (unsigned char)((out_hi << 4) | out_lo);
-                if (lo > 11u) mask4 |= (1u << i);
-                if (hi > 11u) mask4 |= (1u << (i + 16));
-                if (out_lo == 0u) mask1 |= (1u << i);
-                if (out_hi == 0u) mask1 |= (1u << (i + 16));
-            }
+        if (row_idx < total_rows) {
             while (mask4) {
                 int pos = __builtin_ctz(mask4);
                 mask4 &= (mask4 - 1u);
                 unsigned int nib = corr_read_bits(patch_bytes, bit_pos, 4);
                 bit_pos += 4ull;
                 int bi = pos & 15;
-                if (pos < 16) row[bi] = (unsigned char)((row[bi] & 0xF0u) | nib);
-                else          row[bi] = (unsigned char)((row[bi] & 0x0Fu) | (nib << 4));
+                int wi = bi >> 2;
+                int sh = (bi & 3) * 8 + ((pos < 16) ? 0 : 4);
+                row_u32[wi] = (row_u32[wi] & ~(0xFu << sh)) | (nib << sh);
             }
             if (zs != 0) {
                 while (mask1) {
@@ -830,12 +970,26 @@ extern "C" __global__ void hv41_plane_restore_kernel(
                     mask1 &= (mask1 - 1u);
                     unsigned int bit = corr_read_bits(patch_bytes, bit_pos, 1);
                     bit_pos += 1ull;
-                    if (bit) row[pos & 15] |= (pos < 16) ? 0x08u : 0x80u;
+                    if (bit) {
+                        int bi = pos & 15;
+                        int wi = bi >> 2;
+                        int sh = (bi & 3) * 8 + ((pos < 16) ? 3 : 7);
+                        row_u32[wi] |= (1u << sh);
+                    }
                 }
             }
-            unsigned char* dst = out_codes + (long long)(g * 8 + r) * (K >> 1) + (long long)kb * 16ll;
-            for (int i = 0; i < 16; ++i) dst[i] = row[i];
+            u4_t* dst = (u4_t*)(out_codes + (long long)(g * 8 + r) * (K >> 1) + (long long)kb * 16ll);
+            u4_t val;
+            val.x = row_u32[0];
+            val.y = row_u32[1];
+            val.z = row_u32[2];
+            val.w = row_u32[3];
+            *dst = val;
         }
+        if (tid == 255) {
+            s_base_bit += (unsigned long long)s_scan[255];
+        }
+        __builtin_amdgcn_s_barrier();
     }
 }
 
@@ -907,6 +1061,8 @@ struct State {
     HipApi hip;
     void* hip_module = nullptr;
     void* fn_m1 = nullptr;
+    void* fn_m1_w8 = nullptr;
+    void* fn_m1_w16 = nullptr;
     void* fn_tile4 = nullptr;
     void* fn_bf16_seq = nullptr;
     void* fn_bf16_w32 = nullptr;
@@ -949,6 +1105,14 @@ struct State {
     void* d_sq_sv = nullptr;   size_t d_sq_sv_bytes = 0;
     void* d_sq_out0 = nullptr; size_t d_sq_out0_bytes = 0;
     void* d_sq_out1 = nullptr; size_t d_sq_out1_bytes = 0;
+
+    static constexpr size_t kMaxPinnedStage = 2ull * 1024ull * 1024ull;
+    void* h_in0 = nullptr;  size_t h_in0_bytes = 0;
+    void* h_in1 = nullptr;  size_t h_in1_bytes = 0;
+    void* h_out0 = nullptr; size_t h_out0_bytes = 0;
+    void* h_out1 = nullptr; size_t h_out1_bytes = 0;
+    void* h_out2 = nullptr; size_t h_out2_bytes = 0;
+    void* h_out3 = nullptr; size_t h_out3_bytes = 0;
 
     std::atomic<size_t> resident_bytes{ 0 };
 };
@@ -1048,6 +1212,11 @@ static bool compile_hsaco_gfx1031(ComgrApi& c, const char* isa_name, std::vector
     rc = c.action_info_set_isa_name(info, isa_name);
     if (rc != AMD_COMGR_STATUS_SUCCESS) { err_ctx = "set_isa_name(codegen)"; goto cleanup; }
     c.action_info_set_logging(info, true);
+    {
+        const char* cg_opts[] = { "-O3", "-mcumode" };
+        rc = c.action_info_set_option_list(info, cg_opts, 2);
+        if (rc != AMD_COMGR_STATUS_SUCCESS) { err_ctx = "set_option_list(codegen)"; goto cleanup; }
+    }
 
     rc = c.create_data_set(&reloc_set);
     if (rc != AMD_COMGR_STATUS_SUCCESS) { err_ctx = "create_data_set(reloc)"; goto cleanup; }
@@ -1120,6 +1289,24 @@ static bool ensure_scratch(State& st, size_t need_a, size_t need_s, size_t need_
     return alloc_grow(&st.d_a, &st.d_a_bytes, need_a, "d_a") &&
            alloc_grow(&st.d_s, &st.d_s_bytes, need_s, "d_s") &&
            alloc_grow(&st.d_out, &st.d_out_bytes, need_out, "d_out");
+}
+
+static bool ensure_pinned_buf(State& st, void*& ptr, size_t& cap, size_t need_bytes) {
+    if (need_bytes == 0 || need_bytes > State::kMaxPinnedStage) return false;
+    if (cap >= need_bytes && ptr != nullptr) return true;
+    if (ptr) {
+        st.hip.hostFree(ptr);
+        ptr = nullptr;
+        cap = 0;
+    }
+    int rc = st.hip.hostMalloc(&ptr, need_bytes, 0u);
+    if (rc != HIP_SUCCESS || !ptr) {
+        ptr = nullptr;
+        cap = 0;
+        return false;
+    }
+    cap = need_bytes;
+    return true;
 }
 
 } // namespace
@@ -1200,6 +1387,16 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
         set_error("hipModuleGetFunction(hv41_fp8_linear_m1) failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -1;
     }
+    rc = st.hip.moduleGetFunction(&st.fn_m1_w8, st.hip_module, "hv41_fp8_linear_m1_w8");
+    if (rc != HIP_SUCCESS || !st.fn_m1_w8) {
+        set_error("hipModuleGetFunction(hv41_fp8_linear_m1_w8) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
+    rc = st.hip.moduleGetFunction(&st.fn_m1_w16, st.hip_module, "hv41_fp8_linear_m1_w16");
+    if (rc != HIP_SUCCESS || !st.fn_m1_w16) {
+        set_error("hipModuleGetFunction(hv41_fp8_linear_m1_w16) failed (%d: %s)", rc, st.hip.getErrorString(rc));
+        return -1;
+    }
     rc = st.hip.moduleGetFunction(&st.fn_tile4, st.hip_module, "hv41_fp8_linear_tile4");
     if (rc != HIP_SUCCESS || !st.fn_tile4) {
         set_error("hipModuleGetFunction(hv41_fp8_linear_tile4) failed (%d: %s)", rc, st.hip.getErrorString(rc));
@@ -1261,6 +1458,12 @@ extern "C" __declspec(dllexport) int hv41c_init(char* info_buf, int info_buf_siz
     ensure_scratch(st, 64ull * 8192ull * sizeof(int32_t),
                        64ull * 256ull * sizeof(float),
                        64ull * 32768ull * sizeof(float));
+    ensure_pinned_buf(st, st.h_in0,  st.h_in0_bytes,  256ull * 1024ull);
+    ensure_pinned_buf(st, st.h_in1,  st.h_in1_bytes,   64ull * 1024ull);
+    ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, 256ull * 1024ull);
+    ensure_pinned_buf(st, st.h_out1, st.h_out1_bytes,  64ull * 1024ull);
+    ensure_pinned_buf(st, st.h_out2, st.h_out2_bytes,  64ull * 1024ull);
+    ensure_pinned_buf(st, st.h_out3, st.h_out3_bytes, 128ull * 1024ull);
 
     size_t vfree = 0, vtotal = 0;
     st.hip.memGetInfo(&vfree, &vtotal);
@@ -1368,6 +1571,31 @@ extern "C" __declspec(dllexport) void* hv41c_upload(
     return h;
 }
 
+static int launch_fp8_m1_dev(State& st, const WeightHandle* w, void* d_av, void* d_sv, void* d_out) {
+    void* p_codes = w->d_codes;
+    void* p_scales = w->d_scales;
+    void* p_a = d_av;
+    void* p_s = d_sv;
+    void* p_out = d_out;
+    int p_N = w->N;
+    int p_K = w->K;
+    void* args[] = { &p_codes, &p_scales, &p_a, &p_s, &p_out, &p_N, &p_K };
+    int nkb = w->K >> 5;
+    void* fn = st.fn_m1;
+    unsigned int block_x = 32u;
+    if (nkb >= 8) {
+        if (w->N <= 2560) {
+            fn = st.fn_m1_w16;
+            block_x = 512u;
+        } else {
+            fn = st.fn_m1_w8;
+            block_x = 256u;
+        }
+    }
+    return st.hip.moduleLaunchKernel(
+        fn, (unsigned int)(w->N >> 5), 1u, 1u, block_x, 1u, 1u, 0u, st.stream, args, nullptr);
+}
+
 extern "C" __declspec(dllexport) int hv41c_linear(
     void* handle,
     const int32_t* a,
@@ -1400,12 +1628,25 @@ extern "C" __declspec(dllexport) int hv41c_linear(
         return -3;
     }
 
-    int rc = st.hip.memcpyAsync(st.d_a, a, a_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
+    const void* src_a = a;
+    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, a_bytes)) {
+        memcpy(st.h_in0, a, a_bytes);
+        src_a = st.h_in0;
+    }
+    const void* src_s = s;
+    if (ensure_pinned_buf(st, st.h_in1, st.h_in1_bytes, s_bytes)) {
+        memcpy(st.h_in1, s, s_bytes);
+        src_s = st.h_in1;
+    }
+    bool out_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, out_bytes);
+    void* dst_out = out_pinned ? st.h_out0 : static_cast<void*>(out);
+
+    int rc = st.hip.memcpyAsync(st.d_a, src_a, a_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
     if (rc != HIP_SUCCESS) {
         set_error("hipMemcpyAsync a H2D failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
     }
-    rc = st.hip.memcpyAsync(st.d_s, s, s_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
+    rc = st.hip.memcpyAsync(st.d_s, src_s, s_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
     if (rc != HIP_SUCCESS) {
         set_error("hipMemcpyAsync s H2D failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
@@ -1417,19 +1658,7 @@ extern "C" __declspec(dllexport) int hv41c_linear(
 
     unsigned int grid_x = (unsigned int)(N >> 5);
     if (rows == 1) {
-        void* p_codes  = w->d_codes;
-        void* p_scales = w->d_scales;
-        void* p_a      = st.d_a;
-        void* p_s      = st.d_s;
-        void* p_out    = st.d_out;
-        int   p_N      = N;
-        int   p_K      = K;
-        void* args[] = { &p_codes, &p_scales, &p_a, &p_s, &p_out, &p_N, &p_K };
-        rc = st.hip.moduleLaunchKernel(
-            st.fn_m1,
-            grid_x, 1u, 1u,
-            32u, 1u, 1u,
-            0u, st.stream, args, nullptr);
+        rc = launch_fp8_m1_dev(st, w, st.d_a, st.d_s, st.d_out);
     } else {
         unsigned int grid_y = (unsigned int)((rows + 3) / 4);
         void* p_codes  = w->d_codes;
@@ -1457,7 +1686,7 @@ extern "C" __declspec(dllexport) int hv41c_linear(
         st.hip.eventRecord(st.ev_stop, st.stream);
     }
 
-    rc = st.hip.memcpyAsync(out, st.d_out, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream);
+    rc = st.hip.memcpyAsync(dst_out, st.d_out, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream);
     if (rc != HIP_SUCCESS) {
         set_error("hipMemcpyAsync out D2H failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
@@ -1467,6 +1696,9 @@ extern "C" __declspec(dllexport) int hv41c_linear(
     if (rc != HIP_SUCCESS) {
         set_error("hipStreamSynchronize failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
+    }
+    if (out_pinned) {
+        memcpy(out, st.h_out0, out_bytes);
     }
 
     if (out_ms) {
@@ -1566,7 +1798,15 @@ static int run_bf16_kernel(
     if (!ensure_dev_buf(st, st.d_bf16_x, st.d_bf16_x_bytes, x_bytes)) return -3;
     if (!ensure_dev_buf(st, st.d_bf16_y, st.d_bf16_y_bytes, y_bytes)) return -3;
 
-    int rc = st.hip.memcpyAsync(st.d_bf16_x, x, x_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
+    const void* src_x = x;
+    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, x_bytes)) {
+        memcpy(st.h_in0, x, x_bytes);
+        src_x = st.h_in0;
+    }
+    bool y_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, y_bytes);
+    void* dst_y = y_pinned ? st.h_out0 : static_cast<void*>(y);
+
+    int rc = st.hip.memcpyAsync(st.d_bf16_x, src_x, x_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream);
     if (rc != HIP_SUCCESS) {
         set_error("bf16 H2D failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
@@ -1592,7 +1832,7 @@ static int run_bf16_kernel(
     }
     if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
 
-    rc = st.hip.memcpyAsync(y, st.d_bf16_y, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream);
+    rc = st.hip.memcpyAsync(dst_y, st.d_bf16_y, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream);
     if (rc != HIP_SUCCESS) {
         set_error("bf16 D2H failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
@@ -1601,6 +1841,9 @@ static int run_bf16_kernel(
     if (rc != HIP_SUCCESS) {
         set_error("bf16 sync failed (%d: %s)", rc, st.hip.getErrorString(rc));
         return -4;
+    }
+    if (y_pinned) {
+        memcpy(y, st.h_out0, y_bytes);
     }
     if (ms_out) {
         float ms = 0.0f;
@@ -1784,19 +2027,6 @@ extern "C" __declspec(dllexport) int hv41c_sattn(
     return 0;
 }
 
-static int launch_fp8_m1_dev(State& st, const WeightHandle* w, void* d_av, void* d_sv, void* d_out) {
-    void* p_codes = w->d_codes;
-    void* p_scales = w->d_scales;
-    void* p_a = d_av;
-    void* p_s = d_sv;
-    void* p_out = d_out;
-    int p_N = w->N;
-    int p_K = w->K;
-    void* args[] = { &p_codes, &p_scales, &p_a, &p_s, &p_out, &p_N, &p_K };
-    return st.hip.moduleLaunchKernel(
-        st.fn_m1, (unsigned int)(w->N >> 5), 1u, 1u, 32u, 1u, 1u, 0u, st.stream, args, nullptr);
-}
-
 static int launch_act_quant32_dev(State& st, void* d_x, void* d_av, void* d_sv, int K) {
     void* p_x = d_x;
     void* p_av = d_av;
@@ -1842,8 +2072,21 @@ extern "C" __declspec(dllexport) int hv41c_seq_shared(
         return -3;
     }
 
-    if (st.hip.memcpyAsync(st.d_a, av, av_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(st.d_s, sv, sv_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
+    const void* src_av = av;
+    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, av_in_bytes)) {
+        memcpy(st.h_in0, av, av_in_bytes);
+        src_av = st.h_in0;
+    }
+    const void* src_sv = sv;
+    if (ensure_pinned_buf(st, st.h_in1, st.h_in1_bytes, sv_in_bytes)) {
+        memcpy(st.h_in1, sv, sv_in_bytes);
+        src_sv = st.h_in1;
+    }
+    bool y_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, out_bytes);
+    void* dst_y = y_pinned ? st.h_out0 : static_cast<void*>(y);
+
+    if (st.hip.memcpyAsync(st.d_a, src_av, av_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(st.d_s, src_sv, sv_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
         return -4;
     }
     if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
@@ -1865,9 +2108,12 @@ extern "C" __declspec(dllexport) int hv41c_seq_shared(
     }
     if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
 
-    if (st.hip.memcpyAsync(y, st.d_sq_out0, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
+    if (st.hip.memcpyAsync(dst_y, st.d_sq_out0, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
         st.hip.streamSynchronize(st.stream) != HIP_SUCCESS) {
         return -4;
+    }
+    if (y_pinned) {
+        memcpy(y, st.h_out0, out_bytes);
     }
     if (ms_out) {
         float ms = 0.0f;
@@ -1908,7 +2154,15 @@ extern "C" __declspec(dllexport) int hv41c_seq_back(
         return -3;
     }
 
-    if (st.hip.memcpyAsync(st.d_bf16_x, x, x_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
+    const void* src_x = x;
+    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, x_bytes)) {
+        memcpy(st.h_in0, x, x_bytes);
+        src_x = st.h_in0;
+    }
+    bool y_pinned = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, out_bytes);
+    void* dst_y = y_pinned ? st.h_out0 : static_cast<void*>(y);
+
+    if (st.hip.memcpyAsync(st.d_bf16_x, src_x, x_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
         return -4;
     }
     if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
@@ -1932,9 +2186,12 @@ extern "C" __declspec(dllexport) int hv41c_seq_back(
     }
     if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
 
-    if (st.hip.memcpyAsync(y, st.d_sq_out0, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
+    if (st.hip.memcpyAsync(dst_y, st.d_sq_out0, out_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
         st.hip.streamSynchronize(st.stream) != HIP_SUCCESS) {
         return -4;
+    }
+    if (y_pinned) {
+        memcpy(y, st.h_out0, out_bytes);
     }
     if (ms_out) {
         float ms = 0.0f;
@@ -1987,8 +2244,28 @@ extern "C" __declspec(dllexport) int hv41c_seq_front(
         return -3;
     }
 
-    if (st.hip.memcpyAsync(st.d_a, av, av_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(st.d_s, sv, sv_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
+    const void* src_av = av;
+    if (ensure_pinned_buf(st, st.h_in0, st.h_in0_bytes, av_in_bytes)) {
+        memcpy(st.h_in0, av, av_in_bytes);
+        src_av = st.h_in0;
+    }
+    const void* src_sv = sv;
+    if (ensure_pinned_buf(st, st.h_in1, st.h_in1_bytes, sv_in_bytes)) {
+        memcpy(st.h_in1, sv, sv_in_bytes);
+        src_sv = st.h_in1;
+    }
+    bool kv_pinned  = ensure_pinned_buf(st, st.h_out0, st.h_out0_bytes, kv_bytes);
+    bool qa_pinned  = ensure_pinned_buf(st, st.h_out1, st.h_out1_bytes, qa_bytes);
+    bool qb_pinned  = ensure_pinned_buf(st, st.h_out2, st.h_out2_bytes, qb_bytes);
+    bool iqb_pinned = (w_iqb && y_q_ptrs[1]) ? ensure_pinned_buf(st, st.h_out3, st.h_out3_bytes, iqb_bytes) : false;
+
+    void* dst_kv  = kv_pinned  ? st.h_out0 : static_cast<void*>(out_ptrs[0]);
+    void* dst_qa  = qa_pinned  ? st.h_out1 : static_cast<void*>(y_qa);
+    void* dst_qb  = qb_pinned  ? st.h_out2 : static_cast<void*>(y_q_ptrs[0]);
+    void* dst_iqb = iqb_pinned ? st.h_out3 : static_cast<void*>(y_q_ptrs[1]);
+
+    if (st.hip.memcpyAsync(st.d_a, src_av, av_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(st.d_s, src_sv, sv_in_bytes, HIP_MEMCPY_HOST_TO_DEVICE, st.stream) != HIP_SUCCESS) {
         return -4;
     }
     if (ms_out) st.hip.eventRecord(st.ev_start, st.stream);
@@ -2016,13 +2293,17 @@ extern "C" __declspec(dllexport) int hv41c_seq_front(
     }
     if (ms_out) st.hip.eventRecord(st.ev_stop, st.stream);
 
-    if (st.hip.memcpyAsync(out_ptrs[0], st.d_sq_tmp0, kv_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(y_qa,        st.d_sq_tmp2, qa_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(y_q_ptrs[0], st.d_sq_out0, qb_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
-        (w_iqb && y_q_ptrs[1] && st.hip.memcpyAsync(y_q_ptrs[1], st.d_sq_out1, iqb_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS) ||
+    if (st.hip.memcpyAsync(dst_kv,  st.d_sq_tmp0, kv_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(dst_qa,  st.d_sq_tmp2, qa_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(dst_qb,  st.d_sq_out0, qb_bytes,  HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS ||
+        (w_iqb && y_q_ptrs[1] && st.hip.memcpyAsync(dst_iqb, st.d_sq_out1, iqb_bytes, HIP_MEMCPY_DEVICE_TO_HOST, st.stream) != HIP_SUCCESS) ||
         st.hip.streamSynchronize(st.stream) != HIP_SUCCESS) {
         return -4;
     }
+    if (kv_pinned)  memcpy(out_ptrs[0], st.h_out0, kv_bytes);
+    if (qa_pinned)  memcpy(y_qa,        st.h_out1, qa_bytes);
+    if (qb_pinned)  memcpy(y_q_ptrs[0], st.h_out2, qb_bytes);
+    if (iqb_pinned) memcpy(y_q_ptrs[1], st.h_out3, iqb_bytes);
     if (ms_out) {
         float ms = 0.0f;
         *ms_out = (st.hip.eventElapsedTime(&ms, st.ev_start, st.ev_stop) == HIP_SUCCESS) ? ms : 0.0f;
@@ -2062,6 +2343,8 @@ struct CorrState {
     static constexpr size_t MAT_SCALES_BYTES = 0x5A000;
     static constexpr size_t MAT_STRIDE = 0x5FA000;
     static constexpr size_t DEC_SLOT_BYTES = 0x11EE000;
+    static constexpr size_t SLOT_DEV_BYTES = 557056;
+    static constexpr size_t SLOT_HOST_IN_BYTES = 245760;
 
     void* h2d_stream = nullptr;
     void* comp_stream = nullptr;
@@ -2083,10 +2366,24 @@ struct CorrState {
     float* h_yu[MAX_RING] = {};
     float* h_y2[MAX_RING] = {};
 
-    void* d_av = nullptr;
-    void* d_sv = nullptr;
-    void* d_bad = nullptr;
-    void* d_y_tmp = nullptr;
+    void* d_ring_scratch = nullptr;
+    uint8_t* h_ring_in = nullptr;
+    void* d_av13[MAX_RING] = {};
+    void* d_sv13[MAX_RING] = {};
+    void* d_bad13[MAX_RING] = {};
+    void* d_yg[MAX_RING] = {};
+    void* d_yu[MAX_RING] = {};
+    void* d_av2[MAX_RING] = {};
+    void* d_sv2[MAX_RING] = {};
+    void* d_bad2[MAX_RING] = {};
+    void* d_y2[MAX_RING] = {};
+
+    void* h_av13[MAX_RING] = {};
+    void* h_sv13[MAX_RING] = {};
+    void* h_bad13[MAX_RING] = {};
+    void* h_av2[MAX_RING] = {};
+    void* h_sv2[MAX_RING] = {};
+    void* h_bad2[MAX_RING] = {};
 
     void* ev_dec_start[MAX_RING] = {};
     void* ev_dec_end[MAX_RING] = {};
@@ -2113,31 +2410,21 @@ static void corr_set_err(CorrState& cs, const char* fmt, ...) {
     va_end(ap);
 }
 
-static int corr_launch_fp4(
+static int corr_launch_fp4_dev(
     State& st, CorrState& cs,
     int dec_slot, int mat_idx,
-    const int* av, const float* sv, const uint8_t* bad,
+    void* d_av, void* d_sv, void* d_bad, void* d_y,
     int M, int N, int K,
     float* h_out)
 {
-    size_t av_bytes = (size_t)M * (size_t)K * sizeof(int);
-    size_t sv_bytes = (size_t)M * (size_t)(K >> 5) * sizeof(float);
-    size_t y_bytes  = (size_t)M * (size_t)N * sizeof(float);
-
-    if (st.hip.memcpyAsync(cs.d_av, av, av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(cs.d_sv, sv, sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
-        st.hip.memcpyAsync(cs.d_bad, bad, (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_launch_fp4 H2D failed");
-        return -1;
-    }
-
+    size_t y_bytes = (size_t)M * (size_t)N * sizeof(float);
     uint8_t* dec_base = static_cast<uint8_t*>(cs.d_dec[dec_slot]) + (size_t)mat_idx * CorrState::MAT_STRIDE;
     void* p_codes = dec_base;
     void* p_scales = dec_base + CorrState::MAT_CODES_BYTES;
-    void* p_av = cs.d_av;
-    void* p_sv = cs.d_sv;
-    void* p_bad = cs.d_bad;
-    void* p_y = cs.d_y_tmp;
+    void* p_av = d_av;
+    void* p_sv = d_sv;
+    void* p_bad = d_bad;
+    void* p_y = d_y;
     int p_M = M, p_N = N, p_K = K;
     void* args[] = { &p_codes, &p_scales, &p_av, &p_sv, &p_bad, &p_y, &p_M, &p_N, &p_K };
     unsigned int gx = (unsigned int)((N + 63) / 64);
@@ -2145,7 +2432,7 @@ static int corr_launch_fp4(
         corr_set_err(cs, "hv41_fp4_linear_kernel launch failed");
         return -1;
     }
-    if (st.hip.memcpyAsync(h_out, cs.d_y_tmp, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, cs.comp_stream) != HIP_SUCCESS) {
+    if (st.hip.memcpyAsync(h_out, d_y, y_bytes, HIP_MEMCPY_DEVICE_TO_HOST, cs.comp_stream) != HIP_SUCCESS) {
         corr_set_err(cs, "corr_launch_fp4 D2H failed");
         return -1;
     }
@@ -2184,7 +2471,9 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
 
     size_t vram_free = 0, vram_total = 0;
     st.hip.memGetInfo(&vram_free, &vram_total);
-    uint64_t fixed_bytes = (uint64_t)CorrState::DEC_SLOTS * CorrState::DEC_SLOT_BYTES + 32768ull + 512ull * 1024ull;
+    uint64_t fixed_bytes = (uint64_t)CorrState::DEC_SLOTS * CorrState::DEC_SLOT_BYTES
+                         + (uint64_t)CorrState::MAX_RING * CorrState::SLOT_DEV_BYTES
+                         + 32768ull;
     uint64_t floor_bytes = (floor_mib > 0) ? ((uint64_t)floor_mib << 20) : 0ull;
     while (dev_cnt >= 2) {
         if ((uint64_t)vram_free >= floor_bytes + fixed_bytes + (uint64_t)dev_cnt * dev_bytes) break;
@@ -2230,11 +2519,9 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
         corr_set_err(cs, "lut32kb alloc/copy failed");
         return -1;
     }
-    if (st.hip.malloc(&cs.d_av, 8u * 5120u * sizeof(int)) != HIP_SUCCESS ||
-        st.hip.malloc(&cs.d_sv, 8u * 160u * sizeof(float)) != HIP_SUCCESS ||
-        st.hip.malloc(&cs.d_bad, 64) != HIP_SUCCESS ||
-        st.hip.malloc(&cs.d_y_tmp, 8u * 5120u * sizeof(float)) != HIP_SUCCESS) {
-        corr_set_err(cs, "scratch alloc failed");
+    if (st.hip.malloc(&cs.d_ring_scratch, (size_t)CorrState::MAX_RING * CorrState::SLOT_DEV_BYTES) != HIP_SUCCESS ||
+        st.hip.hostMalloc((void**)&cs.h_ring_in, (size_t)CorrState::MAX_RING * CorrState::SLOT_HOST_IN_BYTES, 0u) != HIP_SUCCESS) {
+        corr_set_err(cs, "scratch ring alloc failed");
         return -1;
     }
     for (int i = 0; i < CorrState::DEC_SLOTS; ++i) {
@@ -2244,6 +2531,25 @@ extern "C" __declspec(dllexport) int hv41c_corr_open(
         }
     }
     for (int i = 0; i < CorrState::MAX_RING; ++i) {
+        uint8_t* db = static_cast<uint8_t*>(cs.d_ring_scratch) + (size_t)i * CorrState::SLOT_DEV_BYTES;
+        cs.d_av13[i]  = db + 0;
+        cs.d_sv13[i]  = db + 163840;
+        cs.d_bad13[i] = db + 168960;
+        cs.d_yg[i]    = db + 169216;
+        cs.d_yu[i]    = db + 242944;
+        cs.d_av2[i]   = db + 316672;
+        cs.d_sv2[i]   = db + 390400;
+        cs.d_bad2[i]  = db + 392960;
+        cs.d_y2[i]    = db + 393216;
+
+        uint8_t* hb = cs.h_ring_in + (size_t)i * CorrState::SLOT_HOST_IN_BYTES;
+        cs.h_av13[i]  = hb + 0;
+        cs.h_sv13[i]  = hb + 163840;
+        cs.h_bad13[i] = hb + 168960;
+        cs.h_av2[i]   = hb + 169216;
+        cs.h_sv2[i]   = hb + 242944;
+        cs.h_bad2[i]  = hb + 245504;
+
         if (st.hip.hostMalloc((void**)&cs.h_yg[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
             st.hip.hostMalloc((void**)&cs.h_yu[i], 8u * 2304u * sizeof(float), 0u) != HIP_SUCCESS ||
             st.hip.hostMalloc((void**)&cs.h_y2[i], 8u * 5120u * sizeof(float), 0u) != HIP_SUCCESS ||
@@ -2421,8 +2727,8 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode(
         void* p_out_c = out_c;
         void* p_out_s = out_c + ((size_t)m.N * (size_t)m.K >> 1);
         void* args[] = { &p_field, &p_plane1, &p_pidx, &p_pbytes, &p_lut, &p_N, &p_K, &p_zs, &p_out_c, &p_out_s };
-        unsigned int gx = (unsigned int)(((m.N >> 3) + 63) / 64);
-        if (st.hip.moduleLaunchKernel(st.fn_plane_restore, gx, 1u, 1u, 64u, 1u, 1u, 0u, cs.comp_stream, args, nullptr) != HIP_SUCCESS) {
+        unsigned int gx = (unsigned int)(m.N >> 3);
+        if (st.hip.moduleLaunchKernel(st.fn_plane_restore, gx, 1u, 1u, 256u, 1u, 1u, 0u, cs.comp_stream, args, nullptr) != HIP_SUCCESS) {
             corr_set_err(cs, "hv41_plane_restore_kernel launch failed");
             return -1;
         }
@@ -2432,10 +2738,6 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode(
     st.hip.eventRecord(cs.ev_dev_comp[dev_slot], cs.comp_stream);
     cs.dev_comp_pending[dev_slot] = true;
     cs.dec_timed[ev_slot] = true;
-    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_decode sync failed");
-        return -1;
-    }
     return 0;
 }
 
@@ -2475,10 +2777,6 @@ extern "C" __declspec(dllexport) int hv41c_corr_decode_fp4(
     st.hip.eventRecord(cs.ev_dev_comp[dev_slot], cs.comp_stream);
     cs.dev_comp_pending[dev_slot] = true;
     cs.dec_timed[ev_slot] = true;
-    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "decode_fp4 sync failed");
-        return -1;
-    }
     return 0;
 }
 
@@ -2494,17 +2792,26 @@ extern "C" __declspec(dllexport) int hv41c_corr_w13(
     }
     std::lock_guard<std::mutex> lock(cs.mu);
 
+    size_t av_bytes = (size_t)M * 5120u * sizeof(int);
+    size_t sv_bytes = (size_t)M * 160u * sizeof(float);
+    memcpy(cs.h_av13[out_slot], av, av_bytes);
+    memcpy(cs.h_sv13[out_slot], sv, sv_bytes);
+    memcpy(cs.h_bad13[out_slot], bad, (size_t)M);
+
+    if (st.hip.memcpyAsync(cs.d_av13[out_slot], cs.h_av13[out_slot], av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(cs.d_sv13[out_slot], cs.h_sv13[out_slot], sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(cs.d_bad13[out_slot], cs.h_bad13[out_slot], (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
+        corr_set_err(cs, "corr_w13 H2D failed");
+        return -1;
+    }
+
     st.hip.eventRecord(cs.ev_w13_start[out_slot], cs.comp_stream);
-    if (corr_launch_fp4(st, cs, dec_slot, 0, av, sv, bad, M, 2304, 5120, cs.h_yg[out_slot]) != 0 ||
-        corr_launch_fp4(st, cs, dec_slot, 2, av, sv, bad, M, 2304, 5120, cs.h_yu[out_slot]) != 0) {
+    if (corr_launch_fp4_dev(st, cs, dec_slot, 0, cs.d_av13[out_slot], cs.d_sv13[out_slot], cs.d_bad13[out_slot], cs.d_yg[out_slot], M, 2304, 5120, cs.h_yg[out_slot]) != 0 ||
+        corr_launch_fp4_dev(st, cs, dec_slot, 2, cs.d_av13[out_slot], cs.d_sv13[out_slot], cs.d_bad13[out_slot], cs.d_yu[out_slot], M, 2304, 5120, cs.h_yu[out_slot]) != 0) {
         return -1;
     }
     st.hip.eventRecord(cs.ev_w13_end[out_slot], cs.comp_stream);
     cs.w13_timed[out_slot] = true;
-    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_w13 sync failed");
-        return -1;
-    }
     return 0;
 }
 
@@ -2520,16 +2827,25 @@ extern "C" __declspec(dllexport) int hv41c_corr_w2(
     }
     std::lock_guard<std::mutex> lock(cs.mu);
 
+    size_t av_bytes = (size_t)M * 2304u * sizeof(int);
+    size_t sv_bytes = (size_t)M * 72u * sizeof(float);
+    memcpy(cs.h_av2[out_slot], av, av_bytes);
+    memcpy(cs.h_sv2[out_slot], sv, sv_bytes);
+    memcpy(cs.h_bad2[out_slot], bad, (size_t)M);
+
+    if (st.hip.memcpyAsync(cs.d_av2[out_slot], cs.h_av2[out_slot], av_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(cs.d_sv2[out_slot], cs.h_sv2[out_slot], sv_bytes, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS ||
+        st.hip.memcpyAsync(cs.d_bad2[out_slot], cs.h_bad2[out_slot], (size_t)M, HIP_MEMCPY_HOST_TO_DEVICE, cs.comp_stream) != HIP_SUCCESS) {
+        corr_set_err(cs, "corr_w2 H2D failed");
+        return -1;
+    }
+
     st.hip.eventRecord(cs.ev_w2_start[out_slot], cs.comp_stream);
-    if (corr_launch_fp4(st, cs, dec_slot, 1, av, sv, bad, M, 5120, 2304, cs.h_y2[out_slot]) != 0) {
+    if (corr_launch_fp4_dev(st, cs, dec_slot, 1, cs.d_av2[out_slot], cs.d_sv2[out_slot], cs.d_bad2[out_slot], cs.d_y2[out_slot], M, 5120, 2304, cs.h_y2[out_slot]) != 0) {
         return -1;
     }
     st.hip.eventRecord(cs.ev_w2_end[out_slot], cs.comp_stream);
     cs.w2_timed[out_slot] = true;
-    if (st.hip.streamSynchronize(cs.comp_stream) != HIP_SUCCESS) {
-        corr_set_err(cs, "corr_w2 sync failed");
-        return -1;
-    }
     return 0;
 }
 
@@ -2589,22 +2905,29 @@ extern "C" __declspec(dllexport) void hv41c_corr_take_times(double* out3) {
     State& st = state();
     CorrState& cs = corr_state();
     if (!out3) return;
+    std::lock_guard<std::mutex> lock(cs.mu);
     double t0 = 0.0, t1 = 0.0, t2 = 0.0;
     for (int i = 0; i < CorrState::MAX_RING; ++i) {
         if (cs.dec_timed[i]) {
             float ms = 0.0f;
-            if (st.hip.eventElapsedTime(&ms, cs.ev_dec_start[i], cs.ev_dec_end[i]) == HIP_SUCCESS) t0 += (double)ms;
-            cs.dec_timed[i] = false;
+            if (st.hip.eventElapsedTime(&ms, cs.ev_dec_start[i], cs.ev_dec_end[i]) == HIP_SUCCESS) {
+                t0 += (double)ms;
+                cs.dec_timed[i] = false;
+            }
         }
         if (cs.w13_timed[i]) {
             float ms = 0.0f;
-            if (st.hip.eventElapsedTime(&ms, cs.ev_w13_start[i], cs.ev_w13_end[i]) == HIP_SUCCESS) t1 += (double)ms;
-            cs.w13_timed[i] = false;
+            if (st.hip.eventElapsedTime(&ms, cs.ev_w13_start[i], cs.ev_w13_end[i]) == HIP_SUCCESS) {
+                t1 += (double)ms;
+                cs.w13_timed[i] = false;
+            }
         }
         if (cs.w2_timed[i]) {
             float ms = 0.0f;
-            if (st.hip.eventElapsedTime(&ms, cs.ev_w2_start[i], cs.ev_w2_end[i]) == HIP_SUCCESS) t2 += (double)ms;
-            cs.w2_timed[i] = false;
+            if (st.hip.eventElapsedTime(&ms, cs.ev_w2_start[i], cs.ev_w2_end[i]) == HIP_SUCCESS) {
+                t2 += (double)ms;
+                cs.w2_timed[i] = false;
+            }
         }
     }
     out3[0] += t0;
