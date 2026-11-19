@@ -255,7 +255,7 @@ class DirectHipHv41c:
     def _compile_hsaco(self, isa_name: bytes) -> bytes:
         with open(self.cpp_path, "r", encoding="utf-8") as f:
             cpp_text = f.read()
-        parts = re.findall(r'kHipKernelSource\d*\s*=\s*R"HIP\((.*?)\)HIP";', cpp_text, re.DOTALL)
+        parts = re.findall(r'kHipKernelSource[0-9a-zA-Z_]*\s*=\s*R"HIP\((.*?)\)HIP";', cpp_text, re.DOTALL)
         if not parts:
             raise RuntimeError(f"Could not extract kHipKernelSource from {self.cpp_path}")
         hip_src = "".join(parts).encode("utf-8")
@@ -1204,10 +1204,11 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
             assert h
             return h, c, s
 
-        # seq_shared: fused w8 (K=256), fused w16 (K=512), and unfused fallback (K=192)
+        # seq_shared: fused w8 (K=256), fused w16+down_w16 (K=512, out=256), fused w16+down_w8 (K=512, out=2688), and unfused fallback (K=192)
         for (tag, K_in, N_mid, N_out) in [
             ("fused_w8", 256, 128, 256),
             ("fused_w16", 512, 128, 256),
+            ("fused_w16_dw8", 512, 256, 2688),
             ("fallback", 192, 128, 256),
         ]:
             h_g, cg, sg = _up_fp8(N_mid, K_in)
