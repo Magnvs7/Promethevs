@@ -1612,7 +1612,7 @@ extern "C" __declspec(dllexport) int hv41c_linear(
         return -1;
     }
     const WeightHandle* w = static_cast<const WeightHandle*>(handle);
-    if (!w || !a || !s || !out || rows <= 0 || rows > 64) {
+    if (!w || !a || !s || !out || rows <= 0 || rows > 0xFFFF) {
         set_error("hv41c_linear invalid arguments (handle=%p, rows=%d)", handle, rows);
         return -2;
     }

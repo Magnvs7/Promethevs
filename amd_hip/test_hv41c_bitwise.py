@@ -1094,6 +1094,29 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
     total_bad = 0
     print("\n=== Phase 2 Optional GPU Kernels Bitwise Check ===")
 
+    # 0. Large-M FP8 linear rows > 64 guard regression check (HILO_V41_GPU_FP8_ROWS=512 / prefill chunks)
+    N_lm, K_lm = 128, 128
+    nkb_lm = K_lm >> 5
+    codes_lm = rng.integers(0, 256, size=(N_lm, K_lm), dtype=np.uint8) & np.uint8(0xBF)
+    scales_lm = rng.integers(-6, 4, size=(N_lm // 32, nkb_lm), dtype=np.int8)
+    h_lm = dll.hv41c_upload(codes_lm.ctypes.data, scales_lm.ctypes.data, N_lm, K_lm)
+    assert h_lm, f"hv41c_upload large-M failed: {dll.hv41c_error().decode()}"
+    for rows_lm in (128, 131):
+        a_lm = rng.integers(-4000, 4001, size=(rows_lm, K_lm), dtype=np.int32)
+        s_lm = (
+            rng.choice([-1.0, 1.0], size=(rows_lm, nkb_lm))
+            * rng.uniform(0.25, 2.5, size=(rows_lm, nkb_lm))
+        ).astype(np.float32)
+        out_lm = np.empty((rows_lm, N_lm), dtype=np.float32)
+        assert dll.hv41c_linear(
+            h_lm, a_lm.ctypes.data, s_lm.ctypes.data, rows_lm, out_lm.ctypes.data, None
+        ) == 0, f"hv41c_linear rows={rows_lm} failed: {dll.hv41c_error().decode()}"
+        ref_lm = cpu_ref_hv41f_exact_i64(codes_lm, scales_lm, a_lm, s_lm)
+        bad_lm = int(np.count_nonzero(out_lm.view(np.uint32) != ref_lm))
+        print(f"  fp8_linear M={rows_lm} N={N_lm} K={K_lm}: outputs={rows_lm * N_lm}, mismatches={bad_lm}")
+        total_out += rows_lm * N_lm
+        total_bad += bad_lm
+
     # 1. BF16 seq + w32 checks
     for (M, N, K, ng, rnd) in [(1, 64, 256, 1, 1), (3, 128, 256, 4, 0), (2, 64, 512, 64, 1)]:
         groups = (N - 1) // ng + 1
