@@ -520,7 +520,7 @@ extern "C" __global__ void hv41_sattn_kernel(
     if (h >= H || m >= M) return;
 
     const float* q_ptr = Q + ((unsigned long long)m * (unsigned long long)H + (unsigned long long)h) * (unsigned long long)d;
-    const int* idx_ptr = idx + ((unsigned long long)m * (unsigned long long)H + (unsigned long long)h) * (unsigned long long)topk;
+    const int* idx_ptr = idx + (unsigned long long)m * (unsigned long long)topk;
     float* o_ptr = O + ((unsigned long long)m * (unsigned long long)H + (unsigned long long)h) * (unsigned long long)d;
 
     __attribute__((shared)) static float s_scores[64];
@@ -1723,7 +1723,14 @@ extern "C" __declspec(dllexport) int hv41c_sattn(
 
     size_t q_bytes = (size_t)M * (size_t)H * (size_t)d * sizeof(float);
     size_t k_bytes = (size_t)kv_len * (size_t)d * sizeof(float);
-    size_t idx_bytes = (size_t)M * (size_t)H * (size_t)topk * sizeof(int);
+    size_t idx_count = (size_t)M * (size_t)topk;
+    for (size_t i = 0; i < idx_count; ++i) {
+        if ((unsigned int)(idx[i] + 1) > (unsigned int)kv_len) {
+            set_error("sattn: an index lies outside [-1, %d)", kv_len);
+            return -2;
+        }
+    }
+    size_t idx_bytes = idx_count * sizeof(int);
     size_t sink_bytes = sink ? (size_t)H * sizeof(float) : 0;
 
     if (!ensure_dev_buf(st, st.d_sa_q, st.d_sa_q_bytes, q_bytes)) return -3;

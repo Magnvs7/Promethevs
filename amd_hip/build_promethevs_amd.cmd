@@ -1,5 +1,13 @@
 @echo off
 setlocal
+REM ===========================================================================
+REM Windows Smart App Control (SAC) Prerequisite:
+REM   Locally compiled unsigned hv41cuda.dll / v41_serve2_BF.exe are blocked
+REM   by Windows Smart App Control when VerifiedAndReputablePolicyState = 1
+REM   (exit code 4551 / WinError 4551 / Device Guard 1073751882).
+REM   Set Smart App Control to Off (0) in Windows Security (one-way OS setting;
+REM   takes effect immediately without reboot) before running unsigned builds.
+REM ===========================================================================
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 (
     echo ERROR: Failed to initialize VS 2022 Build Tools x64 environment.

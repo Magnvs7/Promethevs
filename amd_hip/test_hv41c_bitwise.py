@@ -619,7 +619,7 @@ class DirectHipHv41c:
         h = self.hip
         q_bytes = M * H * d * 4
         k_bytes = kv_len * d * 4
-        idx_bytes = M * H * topk * 4
+        idx_bytes = M * topk * 4
         sink_bytes = H * 4
         dQ, dK, dI, dS, dO = [ctypes.c_void_p() for _ in range(5)]
         assert h.hipMalloc(ctypes.byref(dQ), q_bytes) == 0
@@ -1036,7 +1036,7 @@ def _cpu_sattn_ref(Q: np.ndarray, K_mat: np.ndarray, idx: np.ndarray, sink: np.n
 
     M, H, d = Q.shape
     kv_len = K_mat.shape[0]
-    topk = idx.shape[2]
+    topk = idx.shape[1]
     O = np.empty((M, H, d), dtype=np.float32)
     for m in range(M):
         for h in range(H):
@@ -1048,7 +1048,7 @@ def _cpu_sattn_ref(Q: np.ndarray, K_mat: np.ndarray, idx: np.ndarray, sink: np.n
                 c_len = min(64, topk - c0)
                 scores = np.empty(c_len, dtype=np.float32)
                 for t in range(c_len):
-                    tok = int(idx[m, h, c0 + t])
+                    tok = int(idx[m, c0 + t])
                     if tok < 0 or tok >= kv_len:
                         scores[t] = np.float32(-np.inf)
                     else:
@@ -1076,7 +1076,7 @@ def _cpu_sattn_ref(Q: np.ndarray, K_mat: np.ndarray, idx: np.ndarray, sink: np.n
                 for j in range(d):
                     acc = np.float32(alpha * o_acc[j])
                     for t in range(c_len):
-                        tok = int(idx[m, h, c0 + t])
+                        tok = int(idx[m, c0 + t])
                         if 0 <= tok < kv_len:
                             acc = np.float32(acc + np.float32(p_bf16[t] * K_mat[tok, j]))
                     o_acc[j] = acc
@@ -1125,10 +1125,11 @@ def verify_phase2_kernels(dll) -> tuple[int, int]:
     )
     if os.path.exists(exptab_path):
         dll.hv41c_sattn_exptable(exptab_path.encode("utf-8"), 0)
-    for (M, H, d, kv_len, topk) in [(1, 8, 64, 128, 96), (2, 4, 512, 96, 80)]:
+    for (M, H, d, kv_len, topk) in [(1, 8, 64, 128, 96), (2, 4, 512, 96, 80), (31, 8, 512, 64, 32)]:
         Q = rng.standard_normal((M, H, d), dtype=np.float32) * 0.1
         K_mat = rng.standard_normal((kv_len, d), dtype=np.float32) * 0.1
-        idx = rng.integers(-8, kv_len, size=(M, H, topk), dtype=np.int32)
+        idx = rng.integers(-1, kv_len, size=(M, topk), dtype=np.int32)
+        idx[:, 0] = -1
         sink = rng.standard_normal(H, dtype=np.float32) * 0.5
         O_gpu = np.empty((M, H, d), dtype=np.float32)
         assert dll.hv41c_sattn(
