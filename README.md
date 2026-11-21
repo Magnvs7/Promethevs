@@ -16,6 +16,11 @@
   <a href="https://github.com/sponsors/Magnvs7"><img src="https://img.shields.io/badge/Support-Magnvs7-FFB100?logo=githubsponsors&logoColor=white" alt="Support"></a>
 </p>
 
+> [!NOTE]
+> **AMD Radeon RX 6700 XT (`gfx1031`) Windows HIP Port**
+> This fork includes a native Windows 11 port of the engine core (`hv41cuda.dll` and host binary `v41_serve2_BF.exe`) for the **AMD Radeon RX 6700 XT 12 GB (RDNA 2 / `gfx1031`)** using driver-shipped HIP runtime (`amdhip64_6.dll` + `amd_comgr_2.dll`), eliminating the NVIDIA/CUDA requirement.
+> See the [AMD RX 6700 XT Quickstart](#amd-rx-6700-xt-gfx1031-port) below.
+
 PROMETHEVS runs **DeepSeek-V4.1-Flash-1017**, one of the strongest open models, from all 510 GB of its original weights, on an ordinary PC that cannot even load it: a Ryzen 9 3950X with 64 GB of DDR4, an RTX 3060 with 12 GB and two NVMe drives.
 
 The **PROMETHEVS engine** gets there with **compress-then-correct**, a method devised by Ryan Flavell. Every word is first computed on a 2-bit copy of the model's experts. When the model itself is unsure (its top two choices are close), that word is recomputed with the original weights, rebuilt exactly from a stored correction plane. You get close to the speed of the compressed copy and close to the answers of the full model.
@@ -29,6 +34,43 @@ The **PROMETHEVS engine** gets there with **compress-then-correct**, a method de
 - **Free.** Engine Apache-2.0; report, figures and logs CC BY 4.0.
 
 **New here?** Check [what you need](#what-you-need), then [install](#install).
+
+---
+
+## AMD RX 6700 XT (gfx1031) Port
+
+This fork adapts the PROMETHEVS engine (`hv41cuda.dll` and `v41_serve2_BF.exe`) from NVIDIA CUDA to native Windows AMD HIP runtime (`amdhip64_6.dll` + runtime kernel compilation via `amd_comgr_2.dll`). It enables running the full 510 GB DeepSeek-V4.1-Flash model on an AMD Radeon RX 6700 XT 12 GB.
+
+### Hardware Tested
+- **GPU:** AMD Radeon RX 6700 XT 12 GB (`gfx1031`, RDNA 2, 96 MB Infinity Cache)
+- **CPU:** AMD Ryzen 5 5600 6-Core Processor
+- **RAM:** 64 GB DDR4
+- **Drives:** 2x NVMe SSDs (`C:\promethevs` and `D:\promethevs`)
+- **OS:** Windows 11 Pro 64-bit
+
+### Quickstart (AMD Build & Run)
+1. **Prerequisite:** Set Windows Smart App Control to **Off** (`VerifiedAndReputablePolicyState = 0`), as unsigned local DLLs will otherwise be blocked with exit code `4551`.
+2. **Build the AMD HIP core:**
+   ```cmd
+   cd amd_hip
+   build_promethevs_amd.cmd --stage
+   ```
+   *Compiles all 38 C ABI exports and in-memory gfx1031 HIP kernels using standard MSVC `cl.exe` (`VS 2022 Build Tools`) and stages them into `release_0.2\extracted\PROMETHEVS_0.2\bin\`.*
+3. **Verify Bitwise Parity:**
+   ```powershell
+   uv run python test_hv41c_bitwise.py "..\release_0.2\extracted\PROMETHEVS_0.2\bin\hv41cuda.dll"
+   ```
+   *Checks 5.4+ million outputs across FP8, BF16, and sparse attention kernels with 0 bitwise mismatches.*
+4. **Launch the Engine:**
+   ```powershell
+   cd ..\release_0.2\extracted\PROMETHEVS_0.2
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start_engine.ps1 -Ctx 2048 -Ubatch 256
+   ```
+   *Connect any OpenAI-compatible client to `http://127.0.0.1:8100/v1`.*
+
+For full technical specifications, kernel assembly notes, and telemetry audits, see [`amd_hip/README.md`](amd_hip/README.md) and [`amd_hip/TEST_REPORT_RX6700XT.md`](amd_hip/TEST_REPORT_RX6700XT.md).
+
+---
 
 ## What you need
 
