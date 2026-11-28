@@ -32,4 +32,4 @@ We measured agreement against our own exact path and have not yet run DeepSeek's
 
 ## Licence and credits
 
-This repository: MIT, copyright Ryan Flavell, MAGNVS Ltd. DeepSeek-V4.1-Flash-1017: MIT, copyright DeepSeek. We build on DeepSeek's model and draft head and on llama.cpp. Credits are in THIRD_PARTY_NOTICES.md. Implementation, measurement and drafting were assisted by AI coding tools.
+This repository: MIT, copyright Ryan Flavell, MAGNVS Ltd. DeepSeek-V4.1-Flash-1017: MIT, copyright DeepSeek. We build on DeepSeek's model and draft head and on llama.cpp. Credits are in THIRD_PARTY_NOTICES.md.
