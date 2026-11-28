@@ -167,7 +167,7 @@ GitHub's "Cite this repository" button gives the same entry from [CITATION.cff](
 
 ## Acknowledgements
 
-We build on DeepSeek's model and draft head and on the ggml and llama.cpp libraries. Ryan Flavell conceived the method and the ideas it tests, set the direction and the quality bar, decided what was built and tested, and checked the results. The engine code, the test runs and the drafts of this report were built together with AI coding assistants working under his direction.
+We build on DeepSeek's model and draft head and on the ggml and llama.cpp libraries. Ryan Flavell conceived the method and the ideas it tests, set the direction and the quality bar, decided what was built and tested, and checked the results.
 
 ---
 

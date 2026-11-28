@@ -414,7 +414,7 @@ Every number above comes from the logs of the 19 to 21 October runs and was chec
 
 ## Acknowledgements
 
-Ryan Flavell conceived the method and the ideas it tests (checking guessed words with the full model, using a cheap decision to choose what to fetch, treating GPU memory, RAM and the two drives as one ladder, and the self-correcting compressed model that Section 3 describes). He set the direction and the quality bar, decided what was built and tested, and checked the results. The engine code, the test runs and the drafts of this report were built together with AI coding assistants working under his direction. We build on DeepSeek's model and draft head and on the ggml and llama.cpp libraries.
+Ryan Flavell conceived the method and the ideas it tests (checking guessed words with the full model, using a cheap decision to choose what to fetch, treating GPU memory, RAM and the two drives as one ladder, and the self-correcting compressed model that Section 3 describes). He set the direction and the quality bar, decided what was built and tested, and checked the results. We build on DeepSeek's model and draft head and on the ggml and llama.cpp libraries.
 
 ## References
 

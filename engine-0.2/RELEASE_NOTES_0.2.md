@@ -4,7 +4,7 @@ Ryan Flavell (MAGNVS Ltd) · installable engine server · research preview · Oc
 
 ## What this is
 
-0.1 published the report and its logs. 0.2 adds the engine itself, so anyone with a PC like the development PC can run DeepSeek-V4.1-Flash-1017 locally with compress-then-correct decoding: a 2-bit copy of the experts answers every word, the model's own margin flags the words it may have got wrong, and those words are recomputed with the original weights. The method, guess-and-check drafting and the memory layout are Ryan Flavell's ideas; the engine was built with AI coding assistants under his direction.
+0.1 published the report and its logs. 0.2 adds the engine itself, so anyone with a PC like the development PC can run DeepSeek-V4.1-Flash-1017 locally with compress-then-correct decoding: a 2-bit copy of the experts answers every word, the model's own margin flags the words it may have got wrong, and those words are recomputed with the original weights. The method, guess-and-check drafting and the memory layout are Ryan Flavell's ideas.
 
 The bundle serves the model as an OpenAI-compatible endpoint at `http://127.0.0.1:8100/v1` (model `deepseek-v4.1-flash-1017-promethevs`), with streaming and tool calls, so existing apps can use it as a local provider.
 
